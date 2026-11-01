@@ -42,10 +42,13 @@ export default function AdminPage() {
     setErrorLogin('')
 
     try {
+      // Normalizamos el usuario a minúsculas para que acepte "Alexander" o "alexander"
+      const usuarioLimpiado = username.trim().toLowerCase()
+
       const { data, error } = await supabase
         .from('entrenadores')
         .select('*')
-        .eq('usuario', username.trim())
+        .eq('usuario', usuarioLimpiado)
         .eq('password', password.trim())
         .single()
 
@@ -74,6 +77,14 @@ export default function AdminPage() {
       .order('nombre_completo', { ascending: true })
 
     if (dataPerm) setPermitidos(dataPerm)
+  }
+
+  const eliminarAsistencia = async (id: number) => {
+    if (!confirm('¿Estás seguro de eliminar este registro de asistencia?')) return
+    const { error } = await supabase.from('asistencias').delete().eq('id', id)
+    if (!error) {
+      setAsistencias(asistencias.filter(item => item.id !== id))
+    }
   }
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -181,7 +192,7 @@ export default function AdminPage() {
                 <input
                   type="text"
                   required
-                  placeholder="Ej: alexander"
+                  placeholder="Ej: Alexander"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -281,12 +292,13 @@ export default function AdminPage() {
                       <th className="p-4">Empresa</th>
                       <th className="p-4">Curso</th>
                       <th className="p-4 text-center">Firma</th>
+                      <th className="p-4 text-center">Acciones</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800 text-sm">
                     {asistenciasFiltradas.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="p-8 text-center text-slate-500">No hay registros de asistencia encontrados.</td>
+                        <td colSpan={7} className="p-8 text-center text-slate-500">No hay registros de asistencia encontrados.</td>
                       </tr>
                     ) : (
                       asistenciasFiltradas.map((item) => (
@@ -306,6 +318,14 @@ export default function AdminPage() {
                                 title="Hacer clic para ampliar"
                               />
                             )}
+                          </td>
+                          <td className="p-4 text-center">
+                            <button
+                              onClick={() => eliminarAsistencia(item.id)}
+                              className="bg-rose-600/20 text-rose-400 hover:bg-rose-600/30 px-3 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer"
+                            >
+                              Eliminar
+                            </button>
                           </td>
                         </tr>
                       ))
@@ -328,7 +348,7 @@ export default function AdminPage() {
                   {loadingExcel ? 'Subiendo...' : '📂 Subir Excel Autorizado'}
                 </label>
                 {permitidos.length > 0 && (
-                  <button onClick={vaciarPermitidos} className="bg-rose-600/20 text-rose-400 border border-rose-500/30 hover:bg-rose-600/30 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all">
+                  <button onClick={vaciarPermitidos} className="bg-rose-600/20 text-rose-400 border border-rose-500/30 hover:bg-rose-600/30 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer">
                     Vaciar Lista
                   </button>
                 )}
@@ -374,7 +394,7 @@ export default function AdminPage() {
             <div className="bg-white p-4 rounded-xl border border-slate-700">
               <img src={firmaAmpliada} alt="Firma ampliada" className="w-full h-48 object-contain" />
             </div>
-            <button onClick={() => setFirmaAmpliada(null)} className="w-full bg-slate-800 hover:bg-slate-700 py-2.5 rounded-xl font-semibold text-sm transition-all">
+            <button onClick={() => setFirmaAmpliada(null)} className="w-full bg-slate-800 hover:bg-slate-700 py-2.5 rounded-xl font-semibold text-sm transition-all cursor-pointer">
               Cerrar
             </button>
           </div>
