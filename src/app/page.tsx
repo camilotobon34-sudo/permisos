@@ -8,115 +8,133 @@ import { supabase } from '@/lib/supabase'
 export default function Home() {
   const [cedula, setCedula] = useState('')
   const [nombre, setNombre] = useState('')
-  const [empresa, setEmpresa] = useState('')
   const [curso, setCurso] = useState('Trabajo en alturas – Trabajador autorizado')
+  const [empresa, setEmpresa] = useState('')
+  const [fotoCedula, setFotoCedula] = useState<string | null>(null)
+  const [firmaData, setFirmaData] = useState<string | null>(null)
   
-  // Estados para cámara / foto cédula
-  const [imagePreview, setImagePreview] = useState<string | null>(null)
-  
-  // Estado de bloqueo de 1 solo registro por dispositivo
-  const [yaRegistrado, setYaRegistrado] = useState(false)
-  
-  const [mensaje, setMensaje] = useState<string | null>(null)
+  const [alreadyRegistered, setAlreadyRegistered] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [success, setSuccess] = useState(false)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
-  const sigCanvas = useRef<SignatureCanvas>(null)
+  // Estados para el modo entrenador / desbloqueo
+  const [showEntrenadorModal, setShowEntrenadorModal] = useState(false)
+  const [codigoEntrenador, setCodigoEntrenador] = useState('')
+  const [errorEntrenador, setErrorEntrenador] = useState('')
 
-  // Verificar si este dispositivo ya registró asistencia previamente
+  sigCanvasRef = useRef<SignatureCanvas | null>(null)
+
   useEffect(() => {
-    const registroPrevio = localStorage.getItem('asistencia_registrada_industrial')
-    if (registroPrevio === 'true') {
-      setYaRegistrado(true)
+    const registrado = localStorage.getItem('asistencia_registrada_industrial')
+    if (registrado) {
+      setAlreadyRegistered(true)
     }
   }, [])
 
-  const handleImageCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFotoCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
 
     const reader = new FileReader()
-    reader.onload = (evt) => {
-      setImagePreview(evt.target?.result as string)
+    reader.onloadend = () => {
+      setFotoCedula(reader.result as string)
     }
     reader.readAsDataURL(file)
   }
 
   const limpiarFirma = () => {
-    sigCanvas.current?.clear()
+    sigCanvasRef.current?.clear()
+    setFirmaData(null)
+  }
+
+  const guardarFirma = () => {
+    if (sigCanvasRef.current?.isEmpty()) {
+      alert('Por favor realiza tu firma antes de continuar.')
+      return
+    }
+    const signatureURL = sigCanvasRef.current?.getTrimmedCanvas().toDataURL('image/png')
+    setFirmaData(signatureURL || null)
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setMensaje(null)
+    setErrorMsg(null)
 
-    if (yaRegistrado) {
-      setMensaje('⚠️ Ya registraste tu asistencia. Solo se permite 1 registro por dispositivo/sesión.')
+    if (!fotoCedula) {
+      setErrorMsg('Debes tomar o subir la foto de la cédula.')
       return
     }
 
-    if (!imagePreview) {
-      setMensaje('Por favor toma o carga la foto de tu cédula.')
-      return
-    }
-
-    if (!cedula.trim() || !nombre.trim()) {
-      setMensaje('Por favor completa tu número de cédula y nombre completo.')
-      return
-    }
-
-    if (sigCanvas.current?.isEmpty()) {
-      setMensaje('Por favor realiza tu firma digital antes de guardar.')
+    if (!firmaData) {
+      setErrorMsg('Debes guardar tu firma digital.')
       return
     }
 
     setLoading(true)
 
     try {
-      const firmaUrl = sigCanvas.current?.getTrimmedCanvas().toDataURL('image/png')
       const fechaHoy = new Date().toISOString().split('T')[0]
       const horaActual = new Date().toLocaleTimeString()
 
-      // Insertar asistencia en Supabase con los nuevos campos de campo
       const { error } = await supabase.from('asistencias').insert([
         {
           cedula_extraida_ocr: cedula.trim(),
           nombre_extraido_ocr: nombre.trim(),
           empresa_nombre: empresa.trim() || 'N/A',
           curso: curso,
-          foto_cedula_url: imagePreview, // Guardamos la imagen de la cédula
-          firma: firmaUrl,
+          foto_cedula_url: fotoCedula,
+          firma: firmaData,
           fecha: fechaHoy,
           hora: horaActual,
-          metodo: 'auto_qr',
-          entrenador_codigo: 'CAMPO-DIRECTO'
-        },
+          metodo: 'web_campo'
+        }
       ])
 
       if (error) throw error
 
-      // Bloquear este dispositivo para que no haga más registros
       localStorage.setItem('asistencia_registrada_industrial', 'true')
-      setYaRegistrado(true)
-      setMensaje('¡Asistencia registrada con éxito! Muchas gracias.')
-    } catch (err) {
-      setMensaje('Error al registrar la asistencia. Inténtalo de nuevo.')
+      setSuccess(true)
+      setAlreadyRegistered(true)
+    } catch (err: any) {
+      setErrorMsg('Error al registrar la asistencia. Inténtalo de nuevo.')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const desbloquearConEntrenador = (e: React.FormEvent) => {
+    e.preventDefault()
+    setErrorEntrenador('')
+
+    if (codigoEntrenador.trim() === 'ENT-NEIVA-01') {
+      localStorage.removeItem('asistencia_registrada_industrial')
+      setAlreadyRegistered(false)
+      setSuccess(false)
+      setShowEntrenadorModal(false)
+      setCodigoEntrenador('')
+      setCedula('')
+      setNombre('')
+      setEmpresa('')
+      setFotoCedula(null)
+      setFirmaData(null)
+    } else {
+      setErrorEntrenador('Código Maestro incorrecto.')
     }
   }
 
   return (
     <div className="min-h-screen bg-slate-950 text-white flex flex-col justify-between">
       <nav className="border-b border-slate-800 bg-slate-900/60 backdrop-blur-md px-6 py-4 flex justify-between items-center">
-        <span className="font-bold text-indigo-400 text-lg">🛡️ Control Industrial - Campo</span>
+        <span className="font-bold text-indigo-400">🛡️ Control Industrial - Campo</span>
         <div className="flex gap-4 text-sm font-medium">
           <Link href="/" className="text-white bg-indigo-600 px-3 py-1.5 rounded-lg">Registro</Link>
           <Link href="/admin" className="text-slate-400 hover:text-white px-3 py-1.5 rounded-lg transition-colors">Administrador</Link>
         </div>
       </nav>
 
-      <div className="flex items-center justify-center p-4 sm:p-6 my-auto">
-        <div className="max-w-xl w-full bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6">
+      <main className="flex-1 max-w-2xl w-full mx-auto p-4 sm:p-6 flex flex-col justify-center">
+        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6">
           <div className="text-center space-y-2">
             <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">
               Registro Digital en Campo
@@ -124,135 +142,202 @@ export default function Home() {
             <p className="text-slate-400 text-sm">Toma foto de tu cédula y firma tu asistencia</p>
           </div>
 
-          {mensaje && (
-            <div className={`p-4 rounded-xl text-sm font-medium text-center ${mensaje.includes('éxito') ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400' : 'bg-rose-500/10 border border-rose-500/20 text-rose-400'}`}>
-              {mensaje}
+          {success && (
+            <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-xl text-center font-medium">
+              ¡Asistencia registrada con éxito! Muchas gracias.
             </div>
           )}
 
-          {yaRegistrado ? (
-            <div className="p-6 bg-slate-950 border border-amber-500/30 rounded-2xl text-center space-y-3">
-              <div className="text-3xl">🔒</div>
-              <h3 className="font-bold text-amber-400">Dispositivo ya registrado</h3>
-              <p className="text-xs text-slate-400">
-                Ya se registró una asistencia desde este celular o navegador. Por seguridad, solo se permite 1 registro por dispositivo.
-              </p>
+          {errorMsg && (
+            <div className="p-4 bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-xl text-center text-sm">
+              {errorMsg}
+            </div>
+          )}
+
+          {alreadyRegistered ? (
+            <div className="bg-slate-950 border border-slate-800 rounded-2xl p-8 text-center space-y-6">
+              <div className="w-16 h-16 bg-amber-500/10 text-amber-400 rounded-full flex items-center justify-center mx-auto text-2xl border border-amber-500/20">
+                🔒
+              </div>
+              <div className="space-y-2">
+                <h2 className="text-xl font-bold text-amber-400">Dispositivo ya registrado</h2>
+                <p className="text-slate-400 text-sm">
+                  Ya se registró una asistencia desde este celular o navegador. Por seguridad, solo se permite 1 registro por dispositivo.
+                </p>
+              </div>
+
+              <button
+                onClick={() => setShowEntrenadorModal(true)}
+                className="text-xs text-indigo-400 hover:text-indigo-300 underline cursor-pointer"
+              >
+                ¿Eres Entrenador? Registrar otro participante desde este dispositivo
+              </button>
             </div>
           ) : (
-            <form onSubmit={handleSubmit} className="space-y-5">
-              {/* Captura de Foto Cédula */}
-              <div className="space-y-2">
-                <label className="block text-xs font-semibold uppercase tracking-wider text-indigo-400">
+            <form onSubmit={handleSubmit} className="space-y-6">
+              {/* 1. Foto Cédula */}
+              <div className="space-y-3">
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400">
                   1. Foto de la Cédula (Frontal) *
                 </label>
-                <div className="border-2 border-dashed border-slate-700 bg-slate-950 rounded-2xl p-4 text-center">
-                  {imagePreview ? (
+                <div className="border-2 border-dashed border-slate-800 rounded-2xl p-6 text-center bg-slate-950/50 hover:border-indigo-500/50 transition-colors">
+                  {fotoCedula ? (
                     <div className="space-y-3">
-                      <img src={imagePreview} alt="Cédula" className="h-36 mx-auto rounded-xl object-cover border border-slate-700" />
-                      <label htmlFor="foto-cedula" className="inline-block bg-slate-800 hover:bg-slate-700 text-xs px-4 py-2 rounded-xl cursor-pointer font-medium transition-all">
+                      <img src={fotoCedula} alt="Cédula capturada" className="h-32 mx-auto object-cover rounded-xl border border-slate-700" />
+                      <label htmlFor="foto-input" className="inline-block bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold px-4 py-2 rounded-xl cursor-pointer transition-all">
                         Cambiar Foto
                       </label>
                     </div>
                   ) : (
-                    <label htmlFor="foto-cedula" className="cursor-pointer space-y-2 block py-4">
-                      <div className="text-3xl">📸</div>
-                      <div className="text-sm font-semibold text-white">Tomar Foto con la Cámara</div>
-                      <div className="text-xs text-slate-500">Haz clic para abrir la cámara del celular</div>
-                    </label>
+                    <div className="space-y-3">
+                      <div className="text-3xl">📷</div>
+                      <div className="text-sm text-slate-300">Toma una foto clara de tu cédula</div>
+                      <label htmlFor="foto-input" className="inline-block bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-4 py-2.5 rounded-xl cursor-pointer transition-all shadow-lg shadow-indigo-600/20">
+                        Tomar / Subir Foto
+                      </label>
+                    </div>
                   )}
-                  <input
-                    id="foto-cedula"
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    onChange={handleImageCapture}
-                    className="hidden"
-                  />
+                  <input id="foto-input" type="file" accept="image/*" capture="environment" onChange={handleFotoCapture} className="hidden" />
                 </div>
               </div>
 
+              {/* 2. Datos */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Número de Cédula *</label>
                   <input
                     type="text"
                     required
-                    placeholder="Ej: 1012345678"
+                    placeholder="Ej: 1036943054"
                     value={cedula}
                     onChange={(e) => setCedula(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   />
                 </div>
-
                 <div>
                   <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Nombre Completo *</label>
                   <input
                     type="text"
                     required
-                    placeholder="Tus nombres y apellidos"
+                    placeholder="Ej: Juan Camilo Tobón"
                     value={nombre}
                     onChange={(e) => setNombre(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   />
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Empresa (Opcional)</label>
-                <input
-                  type="text"
-                  placeholder="Ej: Constructora ABC"
-                  value={empresa}
-                  onChange={(e) => setEmpresa(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
-                />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Empresa / Contratista</label>
+                  <input
+                    type="text"
+                    placeholder="Ej: Industrial S.A.S."
+                    value={empresa}
+                    onChange={(e) => setEmpresa(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Curso *</label>
+                  <select
+                    value={curso}
+                    onChange={(e) => setCurso(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  >
+                    <option value="Trabajo en alturas – Trabajador autorizado">Trabajo en alturas – Trabajador autorizado</option>
+                    <option value="Trabajo en alturas – Coordinador">Trabajo en alturas – Coordinador</option>
+                    <option value="Reentrenamiento sectorial – Trabajo en alturas">Reentrenamiento sectorial – Trabajo en alturas</option>
+                    <option value="Tareas de alto riesgo y trabajo en caliente">Tareas de alto riesgo y trabajo en caliente</option>
+                    <option value="Armado de andamios para trabajo en alturas">Armado de andamios para trabajo en alturas</option>
+                    <option value="Rescate en alturas">Rescate en alturas</option>
+                    <option value="Brigadas de emergencia – Primeros auxilios">Brigadas de emergencia – Primeros auxilios</option>
+                  </select>
+                </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Seleccionar Curso *</label>
-                <select
-                  value={curso}
-                  onChange={(e) => setCurso(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
-                >
-                  <option value="Trabajo en alturas – Trabajador autorizado">Trabajo en alturas – Trabajador autorizado</option>
-                  <option value="Trabajo en alturas – Coordinador">Trabajo en alturas – Coordinador</option>
-                  <option value="Reentrenamiento sectorial – Trabajo en alturas">Reentrenamiento sectorial – Trabajo en alturas</option>
-                  <option value="Tareas de alto riesgo y trabajo en caliente">Tareas de alto riesgo y trabajo en caliente</option>
-                  <option value="Armado de andamios para trabajo en alturas">Armado de andamios para trabajo en alturas</option>
-                  <option value="Rescate en alturas">Rescate en alturas</option>
-                  <option value="Brigadas de emergencia – Primeros auxilios">Brigadas de emergencia – Primeros auxilios</option>
-                </select>
-              </div>
-
-              <div>
-                <div className="flex justify-between items-center mb-2">
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-indigo-400">2. Firma Digital *</label>
-                  <button type="button" onClick={limpiarFirma} className="text-xs text-rose-400 hover:text-rose-300">
-                    Limpiar
+              {/* 3. Firma Digital */}
+              <div className="space-y-3">
+                <div className="flex justify-between items-center">
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400">
+                    2. Firma Digital *
+                  </label>
+                  <button type="button" onClick={limpiarFirma} className="text-xs text-rose-400 hover:underline">
+                    Limpiar firma
                   </button>
                 </div>
-                <div className="border border-slate-800 rounded-2xl bg-white overflow-hidden touch-none">
+                <div className="bg-white rounded-2xl overflow-hidden border border-slate-700">
                   <SignatureCanvas
-                    ref={sigCanvas}
+                    ref={sigCanvasRef}
                     penColor="black"
-                    canvasProps={{ className: 'w-full h-36 cursor-crosshair' }}
+                    canvasProps={{ className: 'w-full h-40 cursor-crosshair bg-white' }}
                   />
                 </div>
+                <button
+                  type="button"
+                  onClick={guardarFirma}
+                  className="w-full bg-slate-800 hover:bg-slate-700 text-white font-semibold py-2 rounded-xl text-xs transition-all cursor-pointer"
+                >
+                  Confirmar Firma
+                </button>
+                {firmaData && <p className="text-xs text-emerald-400 text-center">✓ Firma guardada correctamente</p>}
               </div>
 
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full bg-gradient-to-r from-indigo-600 to-cyan-600 hover:from-indigo-500 hover:to-cyan-500 text-white font-semibold py-4 rounded-xl transition-all shadow-lg shadow-indigo-600/20 disabled:opacity-50 cursor-pointer"
+                className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-3.5 rounded-2xl transition-all shadow-lg shadow-indigo-600/20 cursor-pointer disabled:opacity-50"
               >
-                {loading ? 'Guardando Asistencia...' : 'Firmar y Registrar Asistencia'}
+                {loading ? 'Registrando...' : 'Firmar y Registrar Asistencia'}
               </button>
             </form>
           )}
         </div>
-      </div>
-      <div />
+      </main>
+
+      {/* Modal de desbloqueo para entrenadores */}
+      {showEntrenadorModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-900 border border-slate-800 p-6 rounded-3xl max-w-sm w-full space-y-4">
+            <h3 className="text-lg font-bold text-center">🔓 Acceso de Entrenador</h3>
+            <p className="text-xs text-slate-400 text-center">Ingresa el Código Maestro para permitir un nuevo registro en este dispositivo.</p>
+            
+            {errorEntrenador && (
+              <div className="p-2 bg-rose-500/10 text-rose-400 text-xs rounded-lg text-center">{errorEntrenador}</div>
+            )}
+
+            <form onSubmit={desbloquearConEntrenador} className="space-y-4">
+              <input
+                type="password"
+                required
+                placeholder="Código Maestro (ENT-...)"
+                value={codigoEntrenador}
+                onChange={(e) => setCodigoEntrenador(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowEntrenadorModal(false)}
+                  className="flex-1 bg-slate-800 hover:bg-slate-700 py-2.5 rounded-xl text-xs font-semibold cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 bg-indigo-600 hover:bg-indigo-500 py-2.5 rounded-xl text-xs font-semibold cursor-pointer shadow-lg shadow-indigo-600/20"
+                >
+                  Desbloquear
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      <footer className="py-6 text-center text-xs text-slate-600">
+        Control de Asistencia Industrial • Sistema Seguro
+      </footer>
     </div>
   )
 }
