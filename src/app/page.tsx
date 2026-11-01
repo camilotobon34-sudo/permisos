@@ -3,7 +3,12 @@
 import { useState, useRef, useEffect } from 'react'
 import Link from 'next/link'
 import SignatureCanvas from 'react-signature-canvas'
-import { supabase } from '@/lib/supabase'
+import { createClient } from '@supabase/supabase-js'
+import { createWorker } from 'tesseract.js'
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
+const supabase = createClient(supabaseUrl, supabaseKey)
 
 export default function Home() {
   const [cedula, setCedula] = useState('')
@@ -15,15 +20,15 @@ export default function Home() {
   
   const [alreadyRegistered, setAlreadyRegistered] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [processingOcr, setProcessingOcr] = useState(false)
   const [success, setSuccess] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
-  // Estados para el modo entrenador / desbloqueo
   const [showEntrenadorModal, setShowEntrenadorModal] = useState(false)
   const [codigoEntrenador, setCodigoEntrenador] = useState('')
   const [errorEntrenador, setErrorEntrenador] = useState('')
 
-  sigCanvasRef = useRef<SignatureCanvas | null>(null)
+  const sigCanvasRef = useRef<SignatureCanvas | null>(null)
 
   useEffect(() => {
     const registrado = localStorage.getItem('asistencia_registrada_industrial')
@@ -32,13 +37,39 @@ export default function Home() {
     }
   }, [])
 
-  const handleFotoCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFotoCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
 
     const reader = new FileReader()
-    reader.onloadend = () => {
-      setFotoCedula(reader.result as string)
+    reader.onloadend = async () => {
+      const base64Image = reader.result as string
+      setFotoCedula(base64Image)
+      
+      // Ejecutar OCR automático
+      setProcessingOcr(true)
+      try {
+        const worker = await createWorker('spa')
+        const ret = await worker.recognize(base64Image)
+        const texto = ret.data.text
+        await worker.terminate()
+
+        // Buscar número de cédula (coincidencia de 6 a 10 dígitos)
+        const matchCedula = texto.match(/\b\d{6,10}\b/)
+        if (matchCedula) {
+          setCedula(matchCedula[0])
+        }
+
+        // Tomar líneas con texto en mayúscula como posible nombre
+        const lineas = texto.split('\n').map(l => l.trim()).filter(l => l.length > 5)
+        if (lineas.length > 0) {
+          setNombre(lineas[0])
+        }
+      } catch (err) {
+        console.error('Error OCR:', err)
+      } finally {
+        setProcessingOcr(false)
+      }
     }
     reader.readAsDataURL(file)
   }
@@ -77,6 +108,17 @@ export default function Home() {
       const fechaHoy = new Date().toISOString().split('T')[0]
       const horaActual = new Date().toLocaleTimeString()
 
+      // Capturar geolocalización opcional si el navegador lo permite
+      let coordenadas = 'N/A'
+      if (navigator.geolocation) {
+        try {
+          const position: any = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { timeout: 5000 }))
+          coordenadas = `${position.coords.latitude}, ${position.coords.longitude}`
+        } catch (geoErr) {
+          console.log('GPS no disponible')
+        }
+      }
+
       const { error } = await supabase.from('asistencias').insert([
         {
           cedula_extraida_ocr: cedula.trim(),
@@ -87,6 +129,7 @@ export default function Home() {
           firma: firmaData,
           fecha: fechaHoy,
           hora: horaActual,
+          gps: coordenadas,
           metodo: 'web_campo'
         }
       ])
@@ -103,24 +146,41 @@ export default function Home() {
     }
   }
 
-  const desbloquearConEntrenador = (e: React.FormEvent) => {
+  const desbloquearConEntrenador = async (e: React.FormEvent) => {
     e.preventDefault()
     setErrorEntrenador('')
 
-    if (codigoEntrenador.trim() === 'ENT-NEIVA-01') {
-      localStorage.removeItem('asistencia_registrada_industrial')
-      setAlreadyRegistered(false)
-      setSuccess(false)
-      setShowEntrenadorModal(false)
-      setCodigoEntrenador('')
-      setCedula('')
-      setNombre('')
-      setEmpresa('')
-      setFotoCedula(null)
-      setFirmaData(null)
-    } else {
-      setErrorEntrenador('Código Maestro incorrecto.')
+    const codigo = codigoEntrenador.trim()
+    if (codigo === 'ENT-NEIVA-01') {
+      permitirDesbloqueo()
+      return
     }
+
+    // Verificar en la base de datos si existe el código de entrenador
+    const { data } = await supabase
+      .from('entrenadores')
+      .select('*')
+      .eq('codigo', codigo)
+      .maybeSingle()
+
+    if (data) {
+      permitirDesbloqueo()
+    } else {
+      setErrorEntrenador('Código de entrenador incorrecto.')
+    }
+  }
+
+  const permitirDesbloqueo = () => {
+    localStorage.removeItem('asistencia_registrada_industrial')
+    setAlreadyRegistered(false)
+    setSuccess(false)
+    setShowEntrenadorModal(false)
+    setCodigoEntrenador('')
+    setCedula('')
+    setNombre('')
+    setEmpresa('')
+    setFotoCedula(null)
+    setFirmaData(null)
   }
 
   return (
@@ -139,7 +199,7 @@ export default function Home() {
             <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">
               Registro Digital en Campo
             </h1>
-            <p className="text-slate-400 text-sm">Toma foto de tu cédula y firma tu asistencia</p>
+            <p className="text-slate-400 text-sm">Toma foto de tu cédula, verifica tus datos y firma</p>
           </div>
 
           {success && (
@@ -162,7 +222,7 @@ export default function Home() {
               <div className="space-y-2">
                 <h2 className="text-xl font-bold text-amber-400">Dispositivo ya registrado</h2>
                 <p className="text-slate-400 text-sm">
-                  Ya se registró una asistencia desde este celular o navegador. Por seguridad, solo se permite 1 registro por dispositivo.
+                  Ya se registró una asistencia desde este dispositivo. Por seguridad, solo se permite 1 registro por celular.
                 </p>
               </div>
 
@@ -170,12 +230,11 @@ export default function Home() {
                 onClick={() => setShowEntrenadorModal(true)}
                 className="text-xs text-indigo-400 hover:text-indigo-300 underline cursor-pointer"
               >
-                ¿Eres Entrenador? Registrar otro participante desde este dispositivo
+                ¿Eres Entrenador? Ingresa tu código para registrar otro participante
               </button>
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-6">
-              {/* 1. Foto Cédula */}
               <div className="space-y-3">
                 <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400">
                   1. Foto de la Cédula (Frontal) *
@@ -199,9 +258,11 @@ export default function Home() {
                   )}
                   <input id="foto-input" type="file" accept="image/*" capture="environment" onChange={handleFotoCapture} className="hidden" />
                 </div>
+                {processingOcr && (
+                  <p className="text-xs text-indigo-400 text-center animate-pulse">Leyendo datos de la cédula automáticamente (OCR)...</p>
+                )}
               </div>
 
-              {/* 2. Datos */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Número de Cédula *</label>
@@ -256,7 +317,6 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* 3. Firma Digital */}
               <div className="space-y-3">
                 <div className="flex justify-between items-center">
                   <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400">
@@ -295,12 +355,11 @@ export default function Home() {
         </div>
       </main>
 
-      {/* Modal de desbloqueo para entrenadores */}
       {showEntrenadorModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-slate-900 border border-slate-800 p-6 rounded-3xl max-w-sm w-full space-y-4">
             <h3 className="text-lg font-bold text-center">🔓 Acceso de Entrenador</h3>
-            <p className="text-xs text-slate-400 text-center">Ingresa el Código Maestro para permitir un nuevo registro en este dispositivo.</p>
+            <p className="text-xs text-slate-400 text-center">Ingresa tu código para desbloquear un nuevo registro.</p>
             
             {errorEntrenador && (
               <div className="p-2 bg-rose-500/10 text-rose-400 text-xs rounded-lg text-center">{errorEntrenador}</div>
@@ -308,12 +367,12 @@ export default function Home() {
 
             <form onSubmit={desbloquearConEntrenador} className="space-y-4">
               <input
-                type="password"
+                type="text"
                 required
-                placeholder="Código Maestro (ENT-...)"
+                placeholder="Ej: ENT-NEIVA-01"
                 value={codigoEntrenador}
                 onChange={(e) => setCodigoEntrenador(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 uppercase"
               />
               <div className="flex gap-2">
                 <button
