@@ -40,40 +40,40 @@ export default function AdminPage() {
   const [loadingExcel, setLoadingExcel] = useState(false)
   const [mensajeExcel, setMensajeExcel] = useState<string | null>(null)
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleLogin = (e: React.FormEvent) => {
     e.preventDefault()
     setErrorLogin('')
 
-    try {
-      const inputVal = username.trim()
+    const userInput = username.trim()
+    const passInput = password.trim()
 
-      // Validar si entra por código maestro o usuario tradicional
-      const { data, error } = await supabase
-        .from('entrenadores')
-        .select('*')
-        .or(`codigo.eq.${inputVal},usuario.eq.${inputVal}`)
-        .eq('password', password.trim())
-        .single()
+    // Credenciales maestras y de entrenadores
+    const usuariosValidos = [
+      { user: 'ENT-NEIVA-01', pass: 'viviana2026' },
+      { user: 'Alexander', pass: 'viviana2026' },
+      { user: 'Yesit', pass: 'viviana2026' },
+      { user: 'Camilo', pass: 'viviana2026' },
+      { user: 'Viviana', pass: 'viviana2026' }
+    ]
 
-      if (error || !data) {
-        setErrorLogin('Código de entrenador o contraseña incorrectos.')
-      } else {
-        setIsAuthenticated(true)
-        cargarDatos()
-      }
-    } catch (err) {
-      setErrorLogin('Error al conectar con la base de datos.')
+    const existe = usuariosValidos.some(
+      (u) => u.user.toLowerCase() === userInput.toLowerCase() && u.pass === passInput
+    )
+
+    if (existe) {
+      setIsAuthenticated(true)
+      cargarDatos()
+    } else {
+      setErrorLogin('Código de entrenador o contraseña incorrectos.')
     }
   }
 
   const cargarDatos = async () => {
-    // Obtener la fecha de hoy en formato YYYY-MM-DD para filtrar exclusivamente lo de hoy
     const fechaHoy = new Date().toISOString().split('T')[0]
 
     const { data: dataAsist } = await supabase
       .from('asistencias')
       .select('*')
-      .eq('fecha', fechaHoy) // Restricción: Solo registros del día actual
       .order('created_at', { ascending: false })
     
     if (dataAsist) setAsistencias(dataAsist)
@@ -87,7 +87,7 @@ export default function AdminPage() {
   }
 
   const eliminarAsistencia = async (id: number) => {
-    if (!confirm('¿Estás seguro de eliminar este registro de asistencia de hoy?')) return
+    if (!confirm('¿Estás seguro de eliminar este registro de asistencia?')) return
     const { error } = await supabase.from('asistencias').delete().eq('id', id)
     if (!error) {
       setAsistencias(asistencias.filter(item => item.id !== id))
@@ -148,18 +148,17 @@ export default function AdminPage() {
 
   const exportarExcelAsistencias = () => {
     const datosExportar = asistencias.map((item) => ({
-      'Fecha': item.fecha,
-      'Hora': item.created_at ? new Date(item.created_at).toLocaleTimeString() : '',
-      'Nombre Completo': item.nombre_extraido_ocr,
-      'Cédula': item.cedula_extraida_ocr,
-      'Empresa': item.empresa_nombre,
-      'Curso Realizado': item.curso,
+      'Fecha/Hora': item.created_at ? new Date(item.created_at).toLocaleString() : '',
+      'Nombre Completo': item.nombre_extraido_ocr || '',
+      'Cédula': item.cedula_extraida_ocr || '',
+      'Empresa': item.empresa_nombre || '',
+      'Curso Realizado': item.curso || '',
     }))
 
     const ws = XLSX.utils.json_to_sheet(datosExportar)
     const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'Asistencias_Hoy')
-    XLSX.writeFile(wb, 'Reporte_Asistencias_Industrial_Hoy.xlsx')
+    XLSX.utils.book_append_sheet(wb, ws, 'Asistencias')
+    XLSX.writeFile(wb, 'Reporte_Asistencias_Industrial.xlsx')
   }
 
   const asistenciasFiltradas = asistencias.filter(item => {
@@ -187,7 +186,7 @@ export default function AdminPage() {
               <h1 className="text-2xl font-bold bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">
                 Portal Entrenador / Admin
               </h1>
-              <p className="text-slate-400 text-sm">Ingresa con tu Código Maestro (Ej: ENT-NEIVA-01)</p>
+              <p className="text-slate-400 text-sm">Ingresa con tu Código Maestro o Usuario</p>
             </div>
 
             {errorLogin && (
@@ -235,7 +234,7 @@ export default function AdminPage() {
   return (
     <div className="min-h-screen bg-slate-950 text-white pb-12">
       <nav className="border-b border-slate-800 bg-slate-900/60 backdrop-blur-md px-6 py-4 flex justify-between items-center">
-        <span className="font-bold text-indigo-400">🛡️ Control Industrial - Panel de Hoy</span>
+        <span className="font-bold text-indigo-400">🛡️ Control Industrial - Panel Admin</span>
         <div className="flex gap-4 items-center">
           <Link href="/" className="text-slate-400 hover:text-white px-3 py-1.5 rounded-lg text-sm">Ir a Registro</Link>
           <button onClick={() => setIsAuthenticated(false)} className="bg-rose-600/20 text-rose-400 border border-rose-500/30 px-3 py-1.5 rounded-lg text-sm hover:bg-rose-600/30">Cerrar Sesión</button>
@@ -245,12 +244,12 @@ export default function AdminPage() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-6">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-bold">Asistencias del Día (Hoy)</h1>
-            <p className="text-slate-400 text-sm">Visualización exclusiva de registros de la jornada actual.</p>
+            <h1 className="text-2xl sm:text-3xl font-bold">Asistencias Registradas</h1>
+            <p className="text-slate-400 text-sm">Panel general de consulta y exportación.</p>
           </div>
           <div className="flex bg-slate-900 border border-slate-800 rounded-xl p-1">
             <button onClick={() => setActiveTab('asistencias')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'asistencias' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'}`}>
-              Registros de Hoy ({asistencias.length})
+              Registros ({asistencias.length})
             </button>
             <button onClick={() => setActiveTab('permitidos')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'permitidos' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'}`}>
               Listado Oficial ({permitidos.length})
@@ -286,7 +285,7 @@ export default function AdminPage() {
                   <option value="Brigadas de emergencia – Primeros auxilios">Brigadas de emergencia – Primeros auxilios</option>
                 </select>
                 <button onClick={exportarExcelAsistencias} className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2.5 rounded-xl text-sm font-semibold transition-all shadow-lg shadow-emerald-600/20">
-                  📊 Exportar Excel Hoy
+                  📊 Exportar Excel
                 </button>
               </div>
             </div>
@@ -308,7 +307,7 @@ export default function AdminPage() {
                   <tbody className="divide-y divide-slate-800 text-sm">
                     {asistenciasFiltradas.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="p-8 text-center text-slate-500">No hay registros de asistencia para el día de hoy.</td>
+                        <td colSpan={7} className="p-8 text-center text-slate-500">No hay registros de asistencia encontrados.</td>
                       </tr>
                     ) : (
                       asistenciasFiltradas.map((item) => (
