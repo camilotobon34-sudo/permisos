@@ -44,7 +44,6 @@ export default function AdminPage() {
     try {
       const usuarioIngresado = username.trim()
 
-      // Usamos .ilike para que Supabase ignore mayúsculas y minúsculas en el usuario
       const { data, error } = await supabase
         .from('entrenadores')
         .select('*')
