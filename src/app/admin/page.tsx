@@ -42,13 +42,13 @@ export default function AdminPage() {
     setErrorLogin('')
 
     try {
-      // Normalizamos el usuario a minúsculas para que acepte "Alexander" o "alexander"
-      const usuarioLimpiado = username.trim().toLowerCase()
+      const usuarioIngresado = username.trim()
 
+      // Usamos .ilike para que Supabase ignore mayúsculas y minúsculas en el usuario
       const { data, error } = await supabase
         .from('entrenadores')
         .select('*')
-        .eq('usuario', usuarioLimpiado)
+        .ilike('usuario', usuarioIngresado)
         .eq('password', password.trim())
         .single()
 
