@@ -58,7 +58,7 @@ export default function AdminPage() {
     const userInput = username.trim()
     const passInput = password.trim()
 
-    // Credenciales de Super Admin (Viviana)
+    // 1. Validar primero las credenciales maestras y de super admin localmente (sin fallos)
     if (userInput.toLowerCase() === 'viviana' && passInput === 'viviana2026') {
       setIsAuthenticated(true)
       setEsSuperAdmin(true)
@@ -66,7 +66,14 @@ export default function AdminPage() {
       return
     }
 
-    // Validación para Entrenadores
+    if (userInput === 'ENT-NEIVA-01' && passInput === 'viviana2026') {
+      setIsAuthenticated(true)
+      setEsSuperAdmin(false) // Entra como entrenador (ve lo de hoy)
+      cargarDatos(false)
+      return
+    }
+
+    // 2. Si no es maestro, buscar en la tabla entrenadores de Supabase
     try {
       const { data, error } = await supabase
         .from('entrenadores')
@@ -435,7 +442,6 @@ export default function AdminPage() {
         )}
       </div>
 
-      {/* Modales de ampliación */}
       {firmaAmpliada && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setFirmaAmpliada(null)}>
           <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl max-w-lg w-full space-y-4 text-center" onClick={(e) => e.stopPropagation()}>
