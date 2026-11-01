@@ -8,11 +8,13 @@ import * as XLSX from 'xlsx'
 interface Asistencia {
   id: number
   created_at: string
-  nombre_completo: string
-  cedula: string
+  nombre_extraido_ocr: string
+  cedula_extraida_ocr: string
   curso: string
-  empresa: string
+  empresa_nombre: string
   firma: string
+  foto_cedula_url: string
+  fecha: string
 }
 
 interface AsistentePermitido {
@@ -34,6 +36,7 @@ export default function AdminPage() {
   const [cursoFiltro, setCursoFiltro] = useState('TODOS')
   const [busqueda, setBusqueda] = useState('')
   const [firmaAmpliada, setFirmaAmpliada] = useState<string | null>(null)
+  const [fotoAmpliada, setFotoAmpliada] = useState<string | null>(null)
   const [loadingExcel, setLoadingExcel] = useState(false)
   const [mensajeExcel, setMensajeExcel] = useState<string | null>(null)
 
@@ -42,17 +45,18 @@ export default function AdminPage() {
     setErrorLogin('')
 
     try {
-      const usuarioIngresado = username.trim()
+      const inputVal = username.trim()
 
+      // Validar si entra por código maestro o usuario tradicional
       const { data, error } = await supabase
         .from('entrenadores')
         .select('*')
-        .ilike('usuario', usuarioIngresado)
+        .or(`codigo.eq.${inputVal},usuario.eq.${inputVal}`)
         .eq('password', password.trim())
         .single()
 
       if (error || !data) {
-        setErrorLogin('Usuario o contraseña incorrectos.')
+        setErrorLogin('Código de entrenador o contraseña incorrectos.')
       } else {
         setIsAuthenticated(true)
         cargarDatos()
@@ -63,9 +67,13 @@ export default function AdminPage() {
   }
 
   const cargarDatos = async () => {
+    // Obtener la fecha de hoy en formato YYYY-MM-DD para filtrar exclusivamente lo de hoy
+    const fechaHoy = new Date().toISOString().split('T')[0]
+
     const { data: dataAsist } = await supabase
       .from('asistencias')
       .select('*')
+      .eq('fecha', fechaHoy) // Restricción: Solo registros del día actual
       .order('created_at', { ascending: false })
     
     if (dataAsist) setAsistencias(dataAsist)
@@ -79,7 +87,7 @@ export default function AdminPage() {
   }
 
   const eliminarAsistencia = async (id: number) => {
-    if (!confirm('¿Estás seguro de eliminar este registro de asistencia?')) return
+    if (!confirm('¿Estás seguro de eliminar este registro de asistencia de hoy?')) return
     const { error } = await supabase.from('asistencias').delete().eq('id', id)
     if (!error) {
       setAsistencias(asistencias.filter(item => item.id !== id))
@@ -140,22 +148,25 @@ export default function AdminPage() {
 
   const exportarExcelAsistencias = () => {
     const datosExportar = asistencias.map((item) => ({
-      'Fecha y Hora': new Date(item.created_at).toLocaleString(),
-      'Nombre Completo': item.nombre_completo,
-      'Cédula': item.cedula,
-      'Empresa': item.empresa,
+      'Fecha': item.fecha,
+      'Hora': item.created_at ? new Date(item.created_at).toLocaleTimeString() : '',
+      'Nombre Completo': item.nombre_extraido_ocr,
+      'Cédula': item.cedula_extraida_ocr,
+      'Empresa': item.empresa_nombre,
       'Curso Realizado': item.curso,
     }))
 
     const ws = XLSX.utils.json_to_sheet(datosExportar)
     const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'Asistencias')
-    XLSX.writeFile(wb, 'Reporte_Asistencias_Industrial.xlsx')
+    XLSX.utils.book_append_sheet(wb, ws, 'Asistencias_Hoy')
+    XLSX.writeFile(wb, 'Reporte_Asistencias_Industrial_Hoy.xlsx')
   }
 
   const asistenciasFiltradas = asistencias.filter(item => {
     const cumpleCurso = cursoFiltro === 'TODOS' || item.curso === cursoFiltro
-    const cumpleBusqueda = item.nombre_completo.toLowerCase().includes(busqueda.toLowerCase()) || item.cedula.includes(busqueda)
+    const nombre = item.nombre_extraido_ocr || ''
+    const cedula = item.cedula_extraida_ocr || ''
+    const cumpleBusqueda = nombre.toLowerCase().includes(busqueda.toLowerCase()) || cedula.includes(busqueda)
     return cumpleCurso && cumpleBusqueda
   })
 
@@ -174,9 +185,9 @@ export default function AdminPage() {
           <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl space-y-6">
             <div className="text-center space-y-2">
               <h1 className="text-2xl font-bold bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">
-                Portal Administrador
+                Portal Entrenador / Admin
               </h1>
-              <p className="text-slate-400 text-sm">Ingresa tus credenciales de entrenador</p>
+              <p className="text-slate-400 text-sm">Ingresa con tu Código Maestro (Ej: ENT-NEIVA-01)</p>
             </div>
 
             {errorLogin && (
@@ -187,11 +198,11 @@ export default function AdminPage() {
 
             <form onSubmit={handleLogin} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Usuario</label>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Código Maestro o Usuario</label>
                 <input
                   type="text"
                   required
-                  placeholder="Ej: Alexander"
+                  placeholder="Ej: ENT-NEIVA-01"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -211,7 +222,7 @@ export default function AdminPage() {
               </div>
 
               <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-3.5 rounded-xl transition-all shadow-lg shadow-indigo-600/20 cursor-pointer">
-                Iniciar Sesión
+                Ingresar al Panel
               </button>
             </form>
           </div>
@@ -224,7 +235,7 @@ export default function AdminPage() {
   return (
     <div className="min-h-screen bg-slate-950 text-white pb-12">
       <nav className="border-b border-slate-800 bg-slate-900/60 backdrop-blur-md px-6 py-4 flex justify-between items-center">
-        <span className="font-bold text-indigo-400">🛡️ Control Industrial - Admin</span>
+        <span className="font-bold text-indigo-400">🛡️ Control Industrial - Panel de Hoy</span>
         <div className="flex gap-4 items-center">
           <Link href="/" className="text-slate-400 hover:text-white px-3 py-1.5 rounded-lg text-sm">Ir a Registro</Link>
           <button onClick={() => setIsAuthenticated(false)} className="bg-rose-600/20 text-rose-400 border border-rose-500/30 px-3 py-1.5 rounded-lg text-sm hover:bg-rose-600/30">Cerrar Sesión</button>
@@ -234,12 +245,12 @@ export default function AdminPage() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-6">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-bold">Panel de Gestión</h1>
-            <p className="text-slate-400 text-sm">Control de asistencias registradas y listados oficiales autorizados.</p>
+            <h1 className="text-2xl sm:text-3xl font-bold">Asistencias del Día (Hoy)</h1>
+            <p className="text-slate-400 text-sm">Visualización exclusiva de registros de la jornada actual.</p>
           </div>
           <div className="flex bg-slate-900 border border-slate-800 rounded-xl p-1">
             <button onClick={() => setActiveTab('asistencias')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'asistencias' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'}`}>
-              Asistencias Firmadas ({asistencias.length})
+              Registros de Hoy ({asistencias.length})
             </button>
             <button onClick={() => setActiveTab('permitidos')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${activeTab === 'permitidos' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'}`}>
               Listado Oficial ({permitidos.length})
@@ -275,7 +286,7 @@ export default function AdminPage() {
                   <option value="Brigadas de emergencia – Primeros auxilios">Brigadas de emergencia – Primeros auxilios</option>
                 </select>
                 <button onClick={exportarExcelAsistencias} className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2.5 rounded-xl text-sm font-semibold transition-all shadow-lg shadow-emerald-600/20">
-                  📊 Exportar Excel
+                  📊 Exportar Excel Hoy
                 </button>
               </div>
             </div>
@@ -285,7 +296,7 @@ export default function AdminPage() {
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="border-b border-slate-800 bg-slate-950/50 text-slate-400 text-xs uppercase tracking-wider">
-                      <th className="p-4">Fecha / Hora</th>
+                      <th className="p-4">Foto Cédula</th>
                       <th className="p-4">Participante</th>
                       <th className="p-4">Cédula</th>
                       <th className="p-4">Empresa</th>
@@ -297,15 +308,27 @@ export default function AdminPage() {
                   <tbody className="divide-y divide-slate-800 text-sm">
                     {asistenciasFiltradas.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="p-8 text-center text-slate-500">No hay registros de asistencia encontrados.</td>
+                        <td colSpan={7} className="p-8 text-center text-slate-500">No hay registros de asistencia para el día de hoy.</td>
                       </tr>
                     ) : (
                       asistenciasFiltradas.map((item) => (
                         <tr key={item.id} className="hover:bg-slate-800/40 transition-colors">
-                          <td className="p-4 text-slate-400 whitespace-nowrap">{new Date(item.created_at).toLocaleString()}</td>
-                          <td className="p-4 font-semibold text-white">{item.nombre_completo}</td>
-                          <td className="p-4 text-slate-300">{item.cedula}</td>
-                          <td className="p-4 text-slate-300">{item.empresa}</td>
+                          <td className="p-4">
+                            {item.foto_cedula_url ? (
+                              <img
+                                src={item.foto_cedula_url}
+                                alt="Cédula"
+                                onClick={() => setFotoAmpliada(item.foto_cedula_url)}
+                                className="h-12 w-16 object-cover rounded cursor-pointer hover:opacity-80 border border-slate-700"
+                                title="Ver cédula ampliada"
+                              />
+                            ) : (
+                              <span className="text-xs text-slate-500">Sin foto</span>
+                            )}
+                          </td>
+                          <td className="p-4 font-semibold text-white">{item.nombre_extraido_ocr}</td>
+                          <td className="p-4 text-slate-300">{item.cedula_extraida_ocr}</td>
+                          <td className="p-4 text-slate-300">{item.empresa_nombre}</td>
                           <td className="p-4 text-slate-300 max-w-xs truncate">{item.curso}</td>
                           <td className="p-4 text-center">
                             {item.firma && (
@@ -314,7 +337,7 @@ export default function AdminPage() {
                                 alt="Firma"
                                 onClick={() => setFirmaAmpliada(item.firma)}
                                 className="h-10 mx-auto bg-white rounded cursor-pointer hover:opacity-80 border border-slate-700 p-0.5"
-                                title="Hacer clic para ampliar"
+                                title="Hacer clic para ampliar firma"
                               />
                             )}
                           </td>
@@ -386,6 +409,7 @@ export default function AdminPage() {
         )}
       </div>
 
+      {/* Modal para ampliar firma */}
       {firmaAmpliada && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setFirmaAmpliada(null)}>
           <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl max-w-lg w-full space-y-4 text-center" onClick={(e) => e.stopPropagation()}>
@@ -394,6 +418,21 @@ export default function AdminPage() {
               <img src={firmaAmpliada} alt="Firma ampliada" className="w-full h-48 object-contain" />
             </div>
             <button onClick={() => setFirmaAmpliada(null)} className="w-full bg-slate-800 hover:bg-slate-700 py-2.5 rounded-xl font-semibold text-sm transition-all cursor-pointer">
+              Cerrar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal para ampliar foto de cédula */}
+      {fotoAmpliada && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setFotoAmpliada(null)}>
+          <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl max-w-md w-full space-y-4 text-center" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-bold">Foto de Cédula Capturada</h3>
+            <div className="bg-slate-950 p-2 rounded-xl border border-slate-700">
+              <img src={fotoAmpliada} alt="Cédula ampliada" className="w-full h-auto max-h-96 object-contain rounded" />
+            </div>
+            <button onClick={() => setFotoAmpliada(null)} className="w-full bg-slate-800 hover:bg-slate-700 py-2.5 rounded-xl font-semibold text-sm transition-all cursor-pointer">
               Cerrar
             </button>
           </div>

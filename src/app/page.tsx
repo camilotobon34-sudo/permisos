@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import Link from 'next/link'
 import SignatureCanvas from 'react-signature-canvas'
 import { supabase } from '@/lib/supabase'
@@ -10,41 +10,35 @@ export default function Home() {
   const [nombre, setNombre] = useState('')
   const [empresa, setEmpresa] = useState('')
   const [curso, setCurso] = useState('Trabajo en alturas – Trabajador autorizado')
-  const [buscando, setBuscando] = useState(false)
-  const [cedulaRegistrada, setCedulaRegistrada] = useState(false)
+  
+  // Estados para cámara / foto cédula
+  const [imagePreview, setImagePreview] = useState<string | null>(null)
+  
+  // Estado de bloqueo de 1 solo registro por dispositivo
+  const [yaRegistrado, setYaRegistrado] = useState(false)
+  
   const [mensaje, setMensaje] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
   const sigCanvas = useRef<SignatureCanvas>(null)
 
-  const buscarCedula = async () => {
-    if (!cedula.trim()) return
-    setBuscando(true)
-    setMensaje(null)
-
-    try {
-      const { data, error } = await supabase
-        .from('asistentes_permitidos')
-        .select('*')
-        .eq('cedula', cedula.trim())
-        .single()
-
-      if (data) {
-        setNombre(data.nombre_completo || '')
-        setEmpresa(data.empresa || '')
-        setCedulaRegistrada(true)
-      } else {
-        setNombre('')
-        setEmpresa('')
-        setCedulaRegistrada(false)
-        setMensaje('La cédula ingresada no se encuentra en el listado oficial autorizados.')
-      }
-    } catch (err) {
-      setCedulaRegistrada(false)
-      setMensaje('Cédula no encontrada en la lista autorizada.')
-    } finally {
-      setBuscando(false)
+  // Verificar si este dispositivo ya registró asistencia previamente
+  useEffect(() => {
+    const registroPrevio = localStorage.getItem('asistencia_registrada_industrial')
+    if (registroPrevio === 'true') {
+      setYaRegistrado(true)
     }
+  }, [])
+
+  const handleImageCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    const reader = new FileReader()
+    reader.onload = (evt) => {
+      setImagePreview(evt.target?.result as string)
+    }
+    reader.readAsDataURL(file)
   }
 
   const limpiarFirma = () => {
@@ -55,8 +49,18 @@ export default function Home() {
     e.preventDefault()
     setMensaje(null)
 
-    if (!cedulaRegistrada) {
-      setMensaje('Por favor ingresa una cédula válida y registrada.')
+    if (yaRegistrado) {
+      setMensaje('⚠️ Ya registraste tu asistencia. Solo se permite 1 registro por dispositivo/sesión.')
+      return
+    }
+
+    if (!imagePreview) {
+      setMensaje('Por favor toma o carga la foto de tu cédula.')
+      return
+    }
+
+    if (!cedula.trim() || !nombre.trim()) {
+      setMensaje('Por favor completa tu número de cédula y nombre completo.')
       return
     }
 
@@ -69,25 +73,31 @@ export default function Home() {
 
     try {
       const firmaUrl = sigCanvas.current?.getTrimmedCanvas().toDataURL('image/png')
+      const fechaHoy = new Date().toISOString().split('T')[0]
+      const horaActual = new Date().toLocaleTimeString()
 
+      // Insertar asistencia en Supabase con los nuevos campos de campo
       const { error } = await supabase.from('asistencias').insert([
         {
-          cedula: cedula.trim(),
-          nombre_completo: nombre,
-          empresa: empresa,
+          cedula_extraida_ocr: cedula.trim(),
+          nombre_extraido_ocr: nombre.trim(),
+          empresa_nombre: empresa.trim() || 'N/A',
           curso: curso,
+          foto_cedula_url: imagePreview, // Guardamos la imagen de la cédula
           firma: firmaUrl,
+          fecha: fechaHoy,
+          hora: horaActual,
+          metodo: 'auto_qr',
+          entrenador_codigo: 'CAMPO-DIRECTO'
         },
       ])
 
       if (error) throw error
 
+      // Bloquear este dispositivo para que no haga más registros
+      localStorage.setItem('asistencia_registrada_industrial', 'true')
+      setYaRegistrado(true)
       setMensaje('¡Asistencia registrada con éxito! Muchas gracias.')
-      setCedula('')
-      setNombre('')
-      setEmpresa('')
-      setCedulaRegistrada(false)
-      sigCanvas.current?.clear()
     } catch (err) {
       setMensaje('Error al registrar la asistencia. Inténtalo de nuevo.')
     } finally {
@@ -97,12 +107,8 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-white flex flex-col justify-between">
-      <head>
-        <title>Control de Asistencia Industrial | SG-SST</title>
-      </head>
-
       <nav className="border-b border-slate-800 bg-slate-900/60 backdrop-blur-md px-6 py-4 flex justify-between items-center">
-        <span className="font-bold text-indigo-400 text-lg">🛡️ Control Industrial</span>
+        <span className="font-bold text-indigo-400 text-lg">🛡️ Control Industrial - Campo</span>
         <div className="flex gap-4 text-sm font-medium">
           <Link href="/" className="text-white bg-indigo-600 px-3 py-1.5 rounded-lg">Registro</Link>
           <Link href="/admin" className="text-slate-400 hover:text-white px-3 py-1.5 rounded-lg transition-colors">Administrador</Link>
@@ -113,9 +119,9 @@ export default function Home() {
         <div className="max-w-xl w-full bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6">
           <div className="text-center space-y-2">
             <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">
-              Registro Digital de Asistencia
+              Registro Digital en Campo
             </h1>
-            <p className="text-slate-400 text-sm">Digita tu cédula para registrar tu asistencia</p>
+            <p className="text-slate-400 text-sm">Toma foto de tu cédula y firma tu asistencia</p>
           </div>
 
           {mensaje && (
@@ -124,95 +130,126 @@ export default function Home() {
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-5">
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Número de Cédula *</label>
-              <div className="flex gap-2">
+          {yaRegistrado ? (
+            <div className="p-6 bg-slate-950 border border-amber-500/30 rounded-2xl text-center space-y-3">
+              <div className="text-3xl">🔒</div>
+              <h3 className="font-bold text-amber-400">Dispositivo ya registrado</h3>
+              <p className="text-xs text-slate-400">
+                Ya se registró una asistencia desde este celular o navegador. Por seguridad, solo se permite 1 registro por dispositivo.
+              </p>
+            </div>
+          ) : (
+            <form onSubmit={handleSubmit} className="space-y-5">
+              {/* Captura de Foto Cédula */}
+              <div className="space-y-2">
+                <label className="block text-xs font-semibold uppercase tracking-wider text-indigo-400">
+                  1. Foto de la Cédula (Frontal) *
+                </label>
+                <div className="border-2 border-dashed border-slate-700 bg-slate-950 rounded-2xl p-4 text-center">
+                  {imagePreview ? (
+                    <div className="space-y-3">
+                      <img src={imagePreview} alt="Cédula" className="h-36 mx-auto rounded-xl object-cover border border-slate-700" />
+                      <label htmlFor="foto-cedula" className="inline-block bg-slate-800 hover:bg-slate-700 text-xs px-4 py-2 rounded-xl cursor-pointer font-medium transition-all">
+                        Cambiar Foto
+                      </label>
+                    </div>
+                  ) : (
+                    <label htmlFor="foto-cedula" className="cursor-pointer space-y-2 block py-4">
+                      <div className="text-3xl">📸</div>
+                      <div className="text-sm font-semibold text-white">Tomar Foto con la Cámara</div>
+                      <div className="text-xs text-slate-500">Haz clic para abrir la cámara del celular</div>
+                    </label>
+                  )}
+                  <input
+                    id="foto-cedula"
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={handleImageCapture}
+                    className="hidden"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Número de Cédula *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ej: 1012345678"
+                    value={cedula}
+                    onChange={(e) => setCedula(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Nombre Completo *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Tus nombres y apellidos"
+                    value={nombre}
+                    onChange={(e) => setNombre(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Empresa (Opcional)</label>
                 <input
                   type="text"
-                  required
-                  placeholder="Ej: 1012345678"
-                  value={cedula}
-                  onChange={(e) => {
-                    setCedula(e.target.value)
-                    setCedulaRegistrada(false)
-                  }}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  placeholder="Ej: Constructora ABC"
+                  value={empresa}
+                  onChange={(e) => setEmpresa(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
                 />
-                <button
-                  type="button"
-                  onClick={buscarCedula}
-                  disabled={buscando}
-                  className="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold px-5 rounded-xl transition-all disabled:opacity-50 whitespace-nowrap"
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Seleccionar Curso *</label>
+                <select
+                  value={curso}
+                  onChange={(e) => setCurso(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
                 >
-                  {buscando ? 'Buscando...' : 'Verificar'}
-                </button>
+                  <option value="Trabajo en alturas – Trabajador autorizado">Trabajo en alturas – Trabajador autorizado</option>
+                  <option value="Trabajo en alturas – Coordinador">Trabajo en alturas – Coordinador</option>
+                  <option value="Reentrenamiento sectorial – Trabajo en alturas">Reentrenamiento sectorial – Trabajo en alturas</option>
+                  <option value="Tareas de alto riesgo y trabajo en caliente">Tareas de alto riesgo y trabajo en caliente</option>
+                  <option value="Armado de andamios para trabajo en alturas">Armado de andamios para trabajo en alturas</option>
+                  <option value="Rescate en alturas">Rescate en alturas</option>
+                  <option value="Brigadas de emergencia – Primeros auxilios">Brigadas de emergencia – Primeros auxilios</option>
+                </select>
               </div>
-            </div>
 
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Nombre Completo</label>
-              <input
-                type="text"
-                readOnly
-                placeholder="Se completará al verificar cédula"
-                value={nombre}
-                className="w-full bg-slate-950/50 border border-slate-800/80 rounded-xl px-4 py-3 text-slate-300 focus:outline-none cursor-not-allowed"
-              />
-            </div>
+              <div>
+                <div className="flex justify-between items-center mb-2">
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-indigo-400">2. Firma Digital *</label>
+                  <button type="button" onClick={limpiarFirma} className="text-xs text-rose-400 hover:text-rose-300">
+                    Limpiar
+                  </button>
+                </div>
+                <div className="border border-slate-800 rounded-2xl bg-white overflow-hidden touch-none">
+                  <SignatureCanvas
+                    ref={sigCanvas}
+                    penColor="black"
+                    canvasProps={{ className: 'w-full h-36 cursor-crosshair' }}
+                  />
+                </div>
+              </div>
 
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Empresa</label>
-              <input
-                type="text"
-                readOnly
-                placeholder="Empresa"
-                value={empresa}
-                className="w-full bg-slate-950/50 border border-slate-800/80 rounded-xl px-4 py-3 text-slate-300 focus:outline-none cursor-not-allowed"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Seleccionar Curso *</label>
-              <select
-                value={curso}
-                onChange={(e) => setCurso(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full bg-gradient-to-r from-indigo-600 to-cyan-600 hover:from-indigo-500 hover:to-cyan-500 text-white font-semibold py-4 rounded-xl transition-all shadow-lg shadow-indigo-600/20 disabled:opacity-50 cursor-pointer"
               >
-                <option value="Trabajo en alturas – Trabajador autorizado">Trabajo en alturas – Trabajador autorizado</option>
-                <option value="Trabajo en alturas – Coordinador">Trabajo en alturas – Coordinador</option>
-                <option value="Reentrenamiento sectorial – Trabajo en alturas">Reentrenamiento sectorial – Trabajo en alturas</option>
-                <option value="Tareas de alto riesgo y trabajo en caliente">Tareas de alto riesgo y trabajo en caliente</option>
-                <option value="Armado de andamios para trabajo en alturas">Armado de andamios para trabajo en alturas</option>
-                <option value="Rescate en alturas">Rescate en alturas</option>
-                <option value="Brigadas de emergencia – Primeros auxilios">Brigadas de emergencia – Primeros auxilios</option>
-              </select>
-            </div>
-
-            <div>
-              <div className="flex justify-between items-center mb-2">
-                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400">Firma Digital *</label>
-                <button type="button" onClick={limpiarFirma} className="text-xs text-rose-400 hover:text-rose-300">
-                  Limpiar
-                </button>
-              </div>
-              <div className="border border-slate-800 rounded-2xl bg-white overflow-hidden touch-none">
-                <SignatureCanvas
-                  ref={sigCanvas}
-                  penColor="black"
-                  canvasProps={{ className: 'w-full h-36 cursor-crosshair' }}
-                />
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading || !cedulaRegistrada}
-              className="w-full bg-gradient-to-r from-indigo-600 to-cyan-600 hover:from-indigo-500 hover:to-cyan-500 text-white font-semibold py-4 rounded-xl transition-all shadow-lg shadow-indigo-600/20 disabled:opacity-50 cursor-pointer"
-            >
-              {loading ? 'Guardando Asistencia...' : 'Firmar y Registrar Asistencia'}
-            </button>
-          </form>
+                {loading ? 'Guardando Asistencia...' : 'Firmar y Registrar Asistencia'}
+              </button>
+            </form>
+          )}
         </div>
       </div>
       <div />
