@@ -69,43 +69,37 @@ export default function Home() {
           const texto = result.ParsedResults[0].ParsedText || ''
           console.log('Texto obtenido:', texto)
 
-          // 1. Extraer el número de documento de forma directa buscando el patrón numérico con puntos
-          const matchCedula = texto.match(/\b\d{1,3}[.,]?\d{3}[.,]?\d{3}\b/)
-          if (matchCedula) {
-            setCedula(matchCedula[0].replace(/[.,]/g, ''))
+          const lineas = texto.split(/\r?\n/).map((l: string) => l.trim()).filter((l: string) => l.length > 0)
+
+          // 1. Extracción directa del número de documento
+          const lineaCedula = lineas.find((l: string) => /\d{1,3}[.,]?\d{3}[.,]?\d{3}/.test(l))
+          if (lineaCedula) {
+            setCedula(lineaCedula.replace(/\D/g, ''))
           } else {
-            // Plan B para números de cédula
             const matchSimple = texto.match(/\b\d{7,10}\b/)
             if (matchSimple) setCedula(matchSimple[0])
           }
 
-          // 2. Extraer Nombre y Apellido de las líneas limpias
-          const lineas = texto
-            .split(/\r?\n/)
-            .map((l: string) => l.trim())
-            .filter((l: string) => l.length > 3)
+          // 2. Filtrar estrictamente títulos para que NUNCA aparezca "Identificación Personal" u otros
+          const palabrasProhibidas = [
+            'REPÚBLICA', 'REPUBLICA', 'COLOMBIA', 'IDENTIFICACION', 'PERSONAL', 
+            'TARJETA', 'IDENTIDAD', 'NÚMERO', 'NUMERO', 'APELLIDOS', 'NOMBRES', 'FIRMA'
+          ]
 
-          // Buscamos líneas que tengan nombres propios en mayúsculas descartando títulos de la tarjeta
-          const lineasValidas = lineas.filter((l: string) => 
-            l === l.toUpperCase() &&
-            !l.includes('REPÚBLICA') &&
-            !l.includes('COLOMBIA') &&
-            !l.includes('IDENTIFICACION') &&
-            !l.includes('TARJETA') &&
-            !l.includes('PERSONAL') &&
-            !l.includes('NÚMERO') &&
-            !l.includes('NUMERO') &&
-            !l.includes('APELLIDOS') &&
-            !l.includes('NOMBRES') &&
-            !l.includes('FIRMA') &&
-            !/\d/.test(l)
-          )
+          const lineasLimpias = lineas.filter((l: string) => {
+            const upper = l.toUpperCase()
+            const tieneProhibida = palabrasProhibidas.some(p => upper.includes(p))
+            const tieneNumeros = /\d/.test(l)
+            return !tieneProhibida && !tieneNumeros && l.length > 3
+          })
 
-          if (lineasValidas.length >= 2) {
-            // Une el apellido y el nombre detectados (ej: TOBON MARULANDA + JUAN CAMILO)
-            setNombre(`${lineasValidas[0]} ${lineasValidas[1]}`)
-          } else if (lineasValidas.length === 1) {
-            setNombre(lineasValidas[0])
+          console.log('Líneas limpias finales:', lineasLimpias)
+
+          if (lineasLimpias.length >= 2) {
+            // Une los apellidos y nombres limpios de la tarjeta
+            setNombre(`${lineasLimpias[0]} ${lineasLimpias[1]}`)
+          } else if (lineasLimpias.length === 1) {
+            setNombre(lineasLimpias[0])
           }
         }
       } catch (err) {
