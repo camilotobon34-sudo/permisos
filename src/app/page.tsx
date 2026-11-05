@@ -46,7 +46,7 @@ export default function Home() {
       const base64Image = reader.result as string
       setFotoCedula(base64Image)
       
-      // Ejecutar OCR automático
+      // Ejecutar OCR automático optimizado para Cédula Colombiana
       setProcessingOcr(true)
       try {
         const worker = await createWorker('spa')
@@ -54,16 +54,42 @@ export default function Home() {
         const texto = ret.data.text
         await worker.terminate()
 
-        // Buscar número de cédula (coincidencia de 6 a 10 dígitos)
+        console.log('Texto OCR detectado:', texto) // Para depuración
+
+        // 1. Buscar número de cédula (coincidencia estricta de 6 a 10 dígitos)
         const matchCedula = texto.match(/\b\d{6,10}\b/)
         if (matchCedula) {
           setCedula(matchCedula[0])
         }
 
-        // Tomar líneas con texto en mayúscula como posible nombre
-        const lineas = texto.split('\n').map(l => l.trim()).filter(l => l.length > 5)
+        // 2. Limpiar y filtrar líneas para encontrar el nombre de forma inteligente
+        const lineas = texto
+          .split('\n')
+          .map(l => l.trim())
+          .filter(l => {
+            const upper = l.toUpperCase()
+            // Excluir palabras basura típicas de la cédula o del entorno de la foto
+            return (
+              l.length > 3 &&
+              !upper.includes('REPÚBLICA') &&
+              !upper.includes('REPUBLICA') &&
+              !upper.includes('COLOMBIA') &&
+              !upper.includes('CEDULA') &&
+              !upper.includes('CAND') &&
+              !upper.includes('NÚMERO') &&
+              !upper.includes('NUMERO') &&
+              !upper.includes('APELLIDOS') &&
+              !upper.includes('NOMBRES') &&
+              !upper.includes('PM') &&
+              !upper.includes('AM') &&
+              !/\d{2}:\d{2}/.test(l) // Excluir horas tipo 3:17
+            )
+          })
+
         if (lineas.length > 0) {
-          setNombre(lineas[0])
+          // Tomar la línea más probable que sea el nombre (usualmente en mayúsculas sostenidas)
+          const nombreEncontrado = lineas.find(l => l === l.toUpperCase() && l.length > 6) || lineas[0]
+          setNombre(nombreEncontrado)
         }
       } catch (err) {
         console.error('Error OCR:', err)
@@ -108,7 +134,6 @@ export default function Home() {
       const fechaHoy = new Date().toISOString().split('T')[0]
       const horaActual = new Date().toLocaleTimeString()
 
-      // Capturar geolocalización opcional si el navegador lo permite
       let coordenadas = 'N/A'
       if (navigator.geolocation) {
         try {
@@ -156,7 +181,6 @@ export default function Home() {
       return
     }
 
-    // Verificar en la base de datos si existe el código de entrenador
     const { data } = await supabase
       .from('entrenadores')
       .select('*')

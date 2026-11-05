@@ -58,7 +58,7 @@ export default function AdminPage() {
     const userInput = username.trim()
     const passInput = password.trim()
 
-    // 1. Validar primero las credenciales maestras y de super admin localmente (sin fallos)
+    // 1. Si es Viviana, entra directamente como Super Admin con visibilidad total
     if (userInput.toLowerCase() === 'viviana' && passInput === 'viviana2026') {
       setIsAuthenticated(true)
       setEsSuperAdmin(true)
@@ -66,27 +66,20 @@ export default function AdminPage() {
       return
     }
 
-    if (userInput === 'ENT-NEIVA-01' && passInput === 'viviana2026') {
-      setIsAuthenticated(true)
-      setEsSuperAdmin(false) // Entra como entrenador (ve lo de hoy)
-      cargarDatos(false)
-      return
-    }
-
-    // 2. Si no es maestro, buscar en la tabla entrenadores de Supabase
+    // 2. Si es un entrenador, busca su código/nombre y contraseña en la base de datos de Supabase
     try {
       const { data, error } = await supabase
         .from('entrenadores')
         .select('*')
-        .eq('codigo', userInput)
+        .or(`codigo.eq.${userInput},nombre.ilike.%${userInput}%`)
         .eq('password', passInput)
         .maybeSingle()
 
       if (error || !data) {
-        setErrorLogin('Código o contraseña incorrectos.')
+        setErrorLogin('Usuario, código o contraseña incorrectos.')
       } else {
         setIsAuthenticated(true)
-        setEsSuperAdmin(false)
+        setEsSuperAdmin(false) // Entra como entrenador (ve solo lo de hoy)
         cargarDatos(false)
       }
     } catch (err) {
@@ -99,7 +92,7 @@ export default function AdminPage() {
 
     let query = supabase.from('asistencias').select('*').order('created_at', { ascending: false })
 
-    // Si es entrenador, FILTRA EXCLUSIVAMENTE lo de hoy. Si es Viviana (Super Admin), trae TODO el histórico.
+    // Si es entrenador, filtra solo lo de hoy. Si es Viviana, trae todo el histórico.
     if (!adminMode) {
       query = query.eq('fecha', fechaHoy)
     }
@@ -107,7 +100,6 @@ export default function AdminPage() {
     const { data: dataAsist } = await query
     if (dataAsist) setAsistencias(dataAsist)
 
-    // Cargar entrenadores si es Super Admin
     if (adminMode) {
       const { data: dataEnt } = await supabase.from('entrenadores').select('*').order('nombre', { ascending: true })
       if (dataEnt) setEntrenadores(dataEnt)
@@ -137,7 +129,7 @@ export default function AdminPage() {
     if (error) {
       setMensajeEntrenador('Error al crear el código (quizá ya existe).')
     } else {
-      setMensajeEntrenador('¡Código de entrenador creado con éxito!')
+      setMensajeEntrenador('¡Entrenador creado con éxito!')
       setNuevoCodigo('')
       setNuevoNombre('')
       setNuevoPassword('')
@@ -146,7 +138,7 @@ export default function AdminPage() {
   }
 
   const eliminarEntrenador = async (id: number) => {
-    if (!confirm('¿Eliminar este código de entrenador?')) return
+    if (!confirm('¿Eliminar este entrenador?')) return
     const { error } = await supabase.from('entrenadores').delete().eq('id', id)
     if (!error) {
       setEntrenadores(entrenadores.filter(e => e.id !== id))
@@ -195,7 +187,7 @@ export default function AdminPage() {
               <h1 className="text-2xl font-bold bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">
                 Portal de Acceso
               </h1>
-              <p className="text-slate-400 text-sm">Entrenador (Código) o Super Admin (Viviana)</p>
+              <p className="text-slate-400 text-sm">Ingresa con tu nombre/código de entrenador o cuenta de Super Admin</p>
             </div>
 
             {errorLogin && (
@@ -206,11 +198,11 @@ export default function AdminPage() {
 
             <form onSubmit={handleLogin} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Usuario o Código</label>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Nombre o Código</label>
                 <input
                   type="text"
                   required
-                  placeholder="Ej: ENT-NEIVA-01 o Viviana"
+                  placeholder="Ej: Alexander o Viviana"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -375,12 +367,12 @@ export default function AdminPage() {
         ) : (
           <div className="space-y-6 max-w-2xl">
             <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl space-y-4">
-              <h2 className="text-lg font-bold">Crear Nuevo Código de Entrenador</h2>
+              <h2 className="text-lg font-bold">Crear Nuevo Entrenador</h2>
               {mensajeEntrenador && <div className="p-3 bg-indigo-500/10 text-indigo-300 rounded-xl text-sm">{mensajeEntrenador}</div>}
               
               <form onSubmit={crearEntrenador} className="space-y-4">
                 <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Código (Ej: ENT-BOGOTA-02)</label>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">Código (Ej: ENT-02)</label>
                   <input
                     type="text"
                     required
@@ -410,7 +402,7 @@ export default function AdminPage() {
                   />
                 </div>
                 <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-500 py-3 rounded-xl font-semibold text-sm transition-all cursor-pointer">
-                  Guardar Código Entrenador
+                  Guardar Entrenador
                 </button>
               </form>
             </div>
