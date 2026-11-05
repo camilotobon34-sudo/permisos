@@ -69,54 +69,43 @@ export default function Home() {
           const texto = result.ParsedResults[0].ParsedText || ''
           console.log('Texto obtenido:', texto)
 
-          // 1. Extraer Cédula limpia (removiendo puntos y espacios)
-          const matchCedula = texto.match(/[\d.\s]{6,12}/g)
+          // 1. Extraer el número de documento de forma directa buscando el patrón numérico con puntos
+          const matchCedula = texto.match(/\b\d{1,3}[.,]?\d{3}[.,]?\d{3}\b/)
           if (matchCedula) {
-            const cedulaLimpia = matchCedula.find((m: string) => m.replace(/\D/g, '').length >= 6 && m.replace(/\D/g, '').length <= 10)
-            if (cedulaLimpia) {
-              setCedula(cedulaLimpia.replace(/\D/g, ''))
-            }
+            setCedula(matchCedula[0].replace(/[.,]/g, ''))
+          } else {
+            // Plan B para números de cédula
+            const matchSimple = texto.match(/\b\d{7,10}\b/)
+            if (matchSimple) setCedula(matchSimple[0])
           }
 
-          // 2. Extraer Nombres y Apellidos de forma inteligente
+          // 2. Extraer Nombre y Apellido de las líneas limpias
           const lineas = texto
             .split(/\r?\n/)
             .map((l: string) => l.trim())
-            .filter((l: string) => l.length > 2)
+            .filter((l: string) => l.length > 3)
 
-          // Buscamos líneas clave donde usualmente están los nombres en la cédula colombiana
-          const idxNombres = lineas.findIndex((l: string) => l.toUpperCase().includes('NOMBRES'))
-          const idxApellidos = lineas.findIndex((l: string) => l.toUpperCase().includes('APELLIDOS'))
+          // Buscamos líneas que tengan nombres propios en mayúsculas descartando títulos de la tarjeta
+          const lineasValidas = lineas.filter((l: string) => 
+            l === l.toUpperCase() &&
+            !l.includes('REPÚBLICA') &&
+            !l.includes('COLOMBIA') &&
+            !l.includes('IDENTIFICACION') &&
+            !l.includes('TARJETA') &&
+            !l.includes('PERSONAL') &&
+            !l.includes('NÚMERO') &&
+            !l.includes('NUMERO') &&
+            !l.includes('APELLIDOS') &&
+            !l.includes('NOMBRES') &&
+            !l.includes('FIRMA') &&
+            !/\d/.test(l)
+          )
 
-          let nombreCompletoEncontrado = ''
-          
-          if (idxApellidos !== -1 && lineas[idxApellidos + 1]) {
-            nombreCompletoEncontrado += lineas[idxApellidos + 1] + ' '
-          }
-          if (idxNombres !== -1 && lineas[idxNombres + 1]) {
-            nombreCompletoEncontrado += lineas[idxNombres + 1]
-          }
-
-          // Si no encuentra las etiquetas exactas, busca líneas en mayúsculas que parezcan nombres
-          if (!nombreCompletoEncontrado.trim()) {
-            const posibles = lineas.filter((l: string) => 
-              l === l.toUpperCase() && 
-              !l.includes('REPÚBLICA') && 
-              !l.includes('COLOMBIA') && 
-              !l.includes('IDENTIFICACION') && 
-              !l.includes('TARJETA') &&
-              !l.includes('CEDULA') &&
-              !/\d/.test(l)
-            )
-            if (posibles.length >= 2) {
-              nombreCompletoEncontrado = `${posibles[0]} ${posibles[1]}`
-            } else if (posibles.length === 1) {
-              nombreCompletoEncontrado = posibles[0]
-            }
-          }
-
-          if (nombreCompletoEncontrado.trim()) {
-            setNombre(nombreCompletoEncontrado.trim())
+          if (lineasValidas.length >= 2) {
+            // Une el apellido y el nombre detectados (ej: TOBON MARULANDA + JUAN CAMILO)
+            setNombre(`${lineasValidas[0]} ${lineasValidas[1]}`)
+          } else if (lineasValidas.length === 1) {
+            setNombre(lineasValidas[0])
           }
         }
       } catch (err) {
