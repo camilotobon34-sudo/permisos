@@ -4,7 +4,6 @@ import { useState, useRef, useEffect } from 'react'
 import Link from 'next/link'
 import SignatureCanvas from 'react-signature-canvas'
 import { createClient } from '@supabase/supabase-js'
-import { createWorker } from 'tesseract.js'
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
@@ -46,53 +45,55 @@ export default function Home() {
       const base64Image = reader.result as string
       setFotoCedula(base64Image)
       
-      // Ejecutar OCR automático optimizado para Cédula Colombiana
       setProcessingOcr(true)
       try {
-        const worker = await createWorker('spa')
-        const ret = await worker.recognize(base64Image)
-        const texto = ret.data.text
-        await worker.terminate()
+        const formData = new FormData()
+        formData.append('base64Image', base64Image)
+        formData.append('language', 'spa')
+        formData.append('isOverlayRequired', 'false')
+        formData.append('scale', 'true')
+        formData.append('OCREngine', '2')
 
-        console.log('Texto OCR detectado:', texto) // Para depuración
+        const response = await fetch('https://api.ocr.space/parse/image', {
+          method: 'POST',
+          headers: {
+            'apikey': 'K88888888888957'
+          },
+          body: formData,
+        })
 
-        // 1. Buscar número de cédula (coincidencia estricta de 6 a 10 dígitos)
-        const matchCedula = texto.match(/\b\d{6,10}\b/)
-        if (matchCedula) {
-          setCedula(matchCedula[0])
-        }
+        const result = await response.json()
+        
+        if (result && result.ParsedResults && result.ParsedResults[0]) {
+          const texto = result.ParsedResults[0].ParsedText || ''
+          console.log('Texto OCR obtenido:', texto)
 
-        // 2. Limpiar y filtrar líneas para encontrar el nombre de forma inteligente
-        const lineas = texto
-          .split('\n')
-          .map(l => l.trim())
-          .filter(l => {
-            const upper = l.toUpperCase()
-            // Excluir palabras basura típicas de la cédula o del entorno de la foto
-            return (
-              l.length > 3 &&
-              !upper.includes('REPÚBLICA') &&
-              !upper.includes('REPUBLICA') &&
-              !upper.includes('COLOMBIA') &&
-              !upper.includes('CEDULA') &&
-              !upper.includes('CAND') &&
-              !upper.includes('NÚMERO') &&
-              !upper.includes('NUMERO') &&
-              !upper.includes('APELLIDOS') &&
-              !upper.includes('NOMBRES') &&
-              !upper.includes('PM') &&
-              !upper.includes('AM') &&
-              !/\d{2}:\d{2}/.test(l) // Excluir horas tipo 3:17
-            )
-          })
+          const matchCedula = texto.match(/\b\d{6,10}\b/)
+          if (matchCedula) {
+            setCedula(matchCedula[0])
+          }
 
-        if (lineas.length > 0) {
-          // Tomar la línea más probable que sea el nombre (usualmente en mayúsculas sostenidas)
-          const nombreEncontrado = lineas.find(l => l === l.toUpperCase() && l.length > 6) || lineas[0]
-          setNombre(nombreEncontrado)
+          const lineas = texto
+            .split(/\r?\n/)
+            .map((l: string) => l.trim())
+            .filter((l: string) => l.length > 3)
+
+          const nombreValido = lineas.find((l: string) => 
+            !l.includes('>') && 
+            !l.includes('=') && 
+            !l.includes('REPÚBLICA') && 
+            !l.includes('COLOMBIA') &&
+            !l.includes('NUIP')
+          )
+
+          if (nombreValido) {
+            setNombre(nombreValido)
+          } else if (lineas.length > 0) {
+            setNombre(lineas[0])
+          }
         }
       } catch (err) {
-        console.error('Error OCR:', err)
+        console.error('Error en OCR externo:', err)
       } finally {
         setProcessingOcr(false)
       }
@@ -283,7 +284,7 @@ export default function Home() {
                   <input id="foto-input" type="file" accept="image/*" capture="environment" onChange={handleFotoCapture} className="hidden" />
                 </div>
                 {processingOcr && (
-                  <p className="text-xs text-indigo-400 text-center animate-pulse">Leyendo datos de la cédula automáticamente (OCR)...</p>
+                  <p className="text-xs text-indigo-400 text-center animate-pulse">Procesando cédula con la nube (OCR)...</p>
                 )}
               </div>
 
@@ -393,7 +394,7 @@ export default function Home() {
               <input
                 type="text"
                 required
-                placeholder="Ej: ENT-NEIVA-01"
+                placeholder="Ej: ENT-01"
                 value={codigoEntrenador}
                 onChange={(e) => setCodigoEntrenador(e.target.value)}
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 uppercase"
