@@ -47,22 +47,24 @@ export default function Home() {
       
       setProcessingOcr(true)
       try {
-        const formData = new FormData()
-        formData.append('base64Image', base64Image)
-        formData.append('language', 'spa')
-        formData.append('isOverlayRequired', 'false')
-        formData.append('scale', 'true')
-        formData.append('OCREngine', '2')
+        const body = new URLSearchParams()
+        body.append('base64Image', base64Image)
+        body.append('language', 'spa')
+        body.append('isOverlayRequired', 'false')
+        body.append('scale', 'true')
+        body.append('OCREngine', '2')
 
         const response = await fetch('https://api.ocr.space/parse/image', {
           method: 'POST',
           headers: {
-            'apikey': 'K88888888888957'
+            'apikey': 'K88888888888957',
+            'Content-Type': 'application/x-www-form-urlencoded',
           },
-          body: formData,
+          body: body.toString(),
         })
 
         const result = await response.json()
+        console.log('Respuesta completa OCR:', result)
         
         if (result && result.ParsedResults && result.ParsedResults[0]) {
           const texto = result.ParsedResults[0].ParsedText || ''
@@ -91,6 +93,8 @@ export default function Home() {
           } else if (lineas.length > 0) {
             setNombre(lineas[0])
           }
+        } else if (result && result.ErrorMessage) {
+          console.error('Mensaje de error de la API OCR:', result.ErrorMessage)
         }
       } catch (err) {
         console.error('Error en OCR externo:', err)
