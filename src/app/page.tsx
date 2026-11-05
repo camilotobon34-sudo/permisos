@@ -69,28 +69,54 @@ export default function Home() {
           const texto = result.ParsedResults[0].ParsedText || ''
           console.log('Texto obtenido:', texto)
 
-          const matchCedula = texto.match(/\b\d{6,10}\b/)
+          // 1. Extraer Cédula limpia (removiendo puntos y espacios)
+          const matchCedula = texto.match(/[\d.\s]{6,12}/g)
           if (matchCedula) {
-            setCedula(matchCedula[0])
+            const cedulaLimpia = matchCedula.find((m: string) => m.replace(/\D/g, '').length >= 6 && m.replace(/\D/g, '').length <= 10)
+            if (cedulaLimpia) {
+              setCedula(cedulaLimpia.replace(/\D/g, ''))
+            }
           }
 
+          // 2. Extraer Nombres y Apellidos de forma inteligente
           const lineas = texto
             .split(/\r?\n/)
             .map((l: string) => l.trim())
-            .filter((l: string) => l.length > 3)
+            .filter((l: string) => l.length > 2)
 
-          const nombreValido = lineas.find((l: string) => 
-            !l.includes('>') && 
-            !l.includes('=') && 
-            !l.includes('REPÚBLICA') && 
-            !l.includes('COLOMBIA') &&
-            !l.includes('NUIP')
-          )
+          // Buscamos líneas clave donde usualmente están los nombres en la cédula colombiana
+          const idxNombres = lineas.findIndex((l: string) => l.toUpperCase().includes('NOMBRES'))
+          const idxApellidos = lineas.findIndex((l: string) => l.toUpperCase().includes('APELLIDOS'))
 
-          if (nombreValido) {
-            setNombre(nombreValido)
-          } else if (lineas.length > 0) {
-            setNombre(lineas[0])
+          let nombreCompletoEncontrado = ''
+          
+          if (idxApellidos !== -1 && lineas[idxApellidos + 1]) {
+            nombreCompletoEncontrado += lineas[idxApellidos + 1] + ' '
+          }
+          if (idxNombres !== -1 && lineas[idxNombres + 1]) {
+            nombreCompletoEncontrado += lineas[idxNombres + 1]
+          }
+
+          // Si no encuentra las etiquetas exactas, busca líneas en mayúsculas que parezcan nombres
+          if (!nombreCompletoEncontrado.trim()) {
+            const posibles = lineas.filter((l: string) => 
+              l === l.toUpperCase() && 
+              !l.includes('REPÚBLICA') && 
+              !l.includes('COLOMBIA') && 
+              !l.includes('IDENTIFICACION') && 
+              !l.includes('TARJETA') &&
+              !l.includes('CEDULA') &&
+              !/\d/.test(l)
+            )
+            if (posibles.length >= 2) {
+              nombreCompletoEncontrado = `${posibles[0]} ${posibles[1]}`
+            } else if (posibles.length === 1) {
+              nombreCompletoEncontrado = posibles[0]
+            }
+          }
+
+          if (nombreCompletoEncontrado.trim()) {
+            setNombre(nombreCompletoEncontrado.trim())
           }
         }
       } catch (err) {
