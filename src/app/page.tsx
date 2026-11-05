@@ -47,28 +47,27 @@ export default function Home() {
       
       setProcessingOcr(true)
       try {
-        const body = new URLSearchParams()
-        body.append('base64Image', base64Image)
-        body.append('language', 'spa')
-        body.append('isOverlayRequired', 'false')
-        body.append('scale', 'true')
-        body.append('OCREngine', '2')
-
         const response = await fetch('https://api.ocr.space/parse/image', {
           method: 'POST',
           headers: {
-            'apikey': 'K88888888888957',
-            'Content-Type': 'application/x-www-form-urlencoded',
+            'Content-Type': 'application/json',
           },
-          body: body.toString(),
+          body: JSON.stringify({
+            apikey: 'K88888888888957',
+            base64Image: base64Image,
+            language: 'spa',
+            isOverlayRequired: false,
+            scale: true,
+            OCREngine: '2'
+          })
         })
 
         const result = await response.json()
-        console.log('Respuesta completa OCR:', result)
+        console.log('Respuesta OCR:', result)
         
         if (result && result.ParsedResults && result.ParsedResults[0]) {
           const texto = result.ParsedResults[0].ParsedText || ''
-          console.log('Texto OCR obtenido:', texto)
+          console.log('Texto obtenido:', texto)
 
           const matchCedula = texto.match(/\b\d{6,10}\b/)
           if (matchCedula) {
@@ -93,11 +92,9 @@ export default function Home() {
           } else if (lineas.length > 0) {
             setNombre(lineas[0])
           }
-        } else if (result && result.ErrorMessage) {
-          console.error('Mensaje de error de la API OCR:', result.ErrorMessage)
         }
       } catch (err) {
-        console.error('Error en OCR externo:', err)
+        console.error('Error en OCR:', err)
       } finally {
         setProcessingOcr(false)
       }
