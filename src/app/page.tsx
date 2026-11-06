@@ -28,6 +28,13 @@ const nameConnectors = new Set(['DE', 'DEL', 'LA', 'EL', 'LOS', 'LAS', 'Y', 'EN'
 const nameFieldBoundaryWords = new Set(
   [...ignoredNameWords].filter((word) => !nameConnectors.has(word)),
 )
+const institutionalNamePattern = new RegExp(
+  [...ignoredNameWords]
+    .filter((word) => word.length >= 4)
+    .sort((a, b) => b.length - a.length)
+    .join('|'),
+  'g',
+)
 
 function normalizeOcrLine(value: string) {
   return value
@@ -42,6 +49,7 @@ function normalizeOcrLine(value: string) {
 function nameWords(value: string) {
   return normalizeOcrLine(value)
     .split(/[\s.,-]+/)
+    .map((word) => word.replace(institutionalNamePattern, ''))
     .filter((word) => /^[A-Z]{2,}$/.test(word) && !ignoredNameWords.has(word))
 }
 
@@ -443,7 +451,7 @@ export default function Home() {
                       )}
                       {ocrStatus === 'partial' && (
                         <p role="status" className="text-sm font-medium text-amber-300">
-                          ✓ Datos detectados automáticamente. Completa o verifica los campos resaltados.
+                          No se detectaron todos los datos. Completa y verifica los campos manualmente.
                         </p>
                       )}
                       {ocrStatus === 'error' && !errorMsg && (
