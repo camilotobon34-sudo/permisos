@@ -10,7 +10,6 @@ const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
 const supabase = createClient(supabaseUrl, supabaseKey)
 
 export default function Home() {
-  // Valores fijos por defecto para que aparezcan siempre listos
   const [cedula, setCedula] = useState('1036943054')
   const [nombre, setNombre] = useState('Camilo Tobón')
   const [curso, setCurso] = useState('Trabajo en alturas – Trabajador autorizado')
