@@ -43,6 +43,11 @@ export default function Home() {
     reader.onloadend = () => {
       const base64Image = reader.result as string
       setFotoCedula(base64Image)
+      
+      // AUTORELLENO AUTOMÁTICO AL SUBIR LA FOTO:
+      // Aquí colocamos tus datos fijos de forma limpia e instantánea al adjuntar la cédula
+      setCedula('1036943054')
+      setNombre('Camilo Tobón')
     }
     reader.readAsDataURL(file)
   }
@@ -175,7 +180,7 @@ export default function Home() {
             <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">
               Registro Digital en Campo
             </h1>
-            <p className="text-slate-400 text-sm">Sube tu cédula, escribe tus datos y firma</p>
+            <p className="text-slate-400 text-sm">Sube tu cédula para autorellenar, verifica y firma</p>
           </div>
 
           {success && (
