@@ -16,6 +16,7 @@
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "react-signature-canvas": "^1.1.0-alpha.2",
+    "sharp": "^0.35.5",
     "signature_pad": "^5.1.4",
     "tesseract.js": "^7.0.0",
     "xlsx": "^0.18.5"

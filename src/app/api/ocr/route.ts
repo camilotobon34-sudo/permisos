@@ -2,6 +2,7 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { mkdir } from 'node:fs/promises'
+import sharp from 'sharp'
 import Tesseract from 'tesseract.js'
 import { extractColombianIdentity } from '@/lib/identity-ocr'
 
@@ -11,6 +12,7 @@ const maxRequestBytes = 4 * 1024 * 1024
 const maxImageBytes = 1_200_000
 const maxImages = 3
 const maxConcurrentJobs = 2
+const minNameWordsForHighConfidence = 3
 const require = createRequire(join(process.cwd(), 'package.json'))
 let activeJobs = 0
 
@@ -19,6 +21,28 @@ function jsonResponse(body: object, status = 200) {
     status,
     headers: { 'Cache-Control': 'no-store, max-age=0' },
   })
+}
+
+function scoreIdentity(identity: { cedula: string; nombre: string }) {
+  const nameWordCount = identity.nombre ? identity.nombre.split(/\s+/).length : 0
+  const complete = Boolean(identity.cedula && nameWordCount >= 2)
+  return {
+    complete,
+    highConfidence: Boolean(identity.cedula && nameWordCount >= minNameWordsForHighConfidence),
+    score: Number(Boolean(identity.cedula)) * 10 + Math.min(nameWordCount, 6),
+  }
+}
+
+async function createPreprocessedVariants(input: Buffer) {
+  const image = sharp(input, { limitInputPixels: 40_000_000 })
+    .rotate()
+    .resize({ width: 2200, height: 2200, fit: 'inside', withoutEnlargement: true })
+
+  const [normalized, contrast] = await Promise.all([
+    image.clone().greyscale().normalize().sharpen().jpeg({ quality: 90 }).toBuffer(),
+    image.clone().greyscale().normalize().linear(1.25, -18).sharpen().jpeg({ quality: 90 }).toBuffer(),
+  ])
+  return [normalized, contrast]
 }
 
 export async function POST(request: Request) {
@@ -74,21 +98,33 @@ export async function POST(request: Request) {
     })
 
     let best = { cedula: '', nombre: '' }
+    let bestScore = scoreIdentity(best).score
+    let foundHighConfidence = false
     for (const image of images) {
       const buffer = Buffer.from(await image.arrayBuffer())
-      const result = await worker.recognize(buffer)
-      const extracted = extractColombianIdentity(result.data.text)
-      const currentScore = Number(Boolean(best.cedula)) + Number(Boolean(best.nombre))
-      const extractedScore = Number(Boolean(extracted.cedula)) + Number(Boolean(extracted.nombre))
+      const variants = await createPreprocessedVariants(buffer)
+      for (const variant of variants) {
+        const result = await worker.recognize(variant)
+        const extracted = extractColombianIdentity(result.data.text)
+        const quality = scoreIdentity(extracted)
 
-      if (extractedScore > currentScore) best = extracted
-      if (extractedScore === 2) break
+        if (quality.score > bestScore) {
+          best = extracted
+          bestScore = quality.score
+        }
+        if (quality.highConfidence) {
+          best = extracted
+          foundHighConfidence = true
+          break
+        }
+      }
+      if (foundHighConfidence) break
     }
 
     return jsonResponse({
       cedula: best.cedula,
       nombre: best.nombre,
-      complete: Boolean(best.cedula && best.nombre),
+      complete: scoreIdentity(best).complete,
     })
   } catch (error) {
     console.error('No se pudo procesar la imagen en el servicio OCR interno.', error)

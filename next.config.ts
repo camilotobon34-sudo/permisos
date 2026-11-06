@@ -10,6 +10,8 @@ const nextConfig: NextConfig = {
       './node_modules/tesseract.js/src/worker-script/**/*',
       './node_modules/tesseract.js-core/**/*',
       './node_modules/wasm-feature-detect/**/*',
+      './node_modules/sharp/**/*',
+      './node_modules/@img/sharp-*/**/*',
     ],
   },
   turbopack: {
