@@ -5,125 +5,63 @@ import type { ChangeEvent, FormEvent } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 import SignatureCanvas from 'react-signature-canvas'
-import Tesseract from 'tesseract.js'
 import { createClient } from '@supabase/supabase-js'
 
 type OcrStatus = 'idle' | 'processing' | 'success' | 'partial' | 'error'
 
 const STORAGE_KEY = 'asistencia_registrada_industrial'
 
-const ignoredNameWords = new Set([
-  'REPUBLICA', 'DE', 'COLOMBIA', 'IDENTIFICACION', 'PERSONAL', 'CEDULA',
-  'CIUDADANIA', 'TARJETA', 'IDENTIDAD', 'NUMERO', 'APELLIDOS', 'NOMBRES',
-  'FIRMA', 'NACIMIENTO', 'ESTATURA', 'SANGRE', 'SEXO', 'MASCULINO',
-  'FEMENINO', 'FECHA', 'LUGAR', 'LA', 'EL', 'NUIP', 'COL', 'DEPARTAMENTO',
-  'BOLIVAR', 'CUNDINAMARCA', 'REGISTRADURIA', 'NACIONAL', 'DOCUMENTO',
-  'EXPEDICION', 'VENCIMIENTO', 'VENCE', 'ESTADO', 'CIVIL', 'ORGANIZACION',
-  'ELECTORAL', 'EXPEDIDA', 'EN', 'DEL', 'LOS', 'LAS', 'Y',
-])
-
-const institutionalNamePattern = new RegExp(
-  [...ignoredNameWords]
-    .filter((word) => word.length >= 4)
-    .sort((a, b) => b.length - a.length)
-    .join('|'),
-  'g',
-)
-const dateLabelPattern = /\b(FECHA|NACIMIENTO|EXPEDICION|VENCIMIENTO|VENCE)\b/
-const numberLabelPattern = /\bNUMERO\b/
-const nextFieldLabelPattern = /\b(NUMERO|APELLIDOS|NOMBRES|FECHA|NACIMIENTO|EXPEDICION|VENCIMIENTO|FIRMA|SEXO|ESTATURA|SANGRE|LUGAR)\b/
-
-function normalizeOcrLine(value: string) {
-  return value
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toUpperCase()
-    .replace(/[^A-Z0-9.\s,-]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
+function canvasToJpeg(canvas: HTMLCanvasElement, quality: number) {
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob)
+      else reject(new Error('No se pudo preparar la imagen para su análisis.'))
+    }, 'image/jpeg', quality)
+  })
 }
 
-function nameWords(value: string) {
-  return normalizeOcrLine(value)
-    .replace(institutionalNamePattern, ' ')
-    .split(/[\s.,-]+/)
-    .filter((word) => /^[A-Z]{2,}$/.test(word) && !ignoredNameWords.has(word))
-}
-
-function extractNamePart(lines: string[], label: 'APELLIDOS' | 'NOMBRES') {
-  const result: string[] = []
-  for (let index = 0; index < lines.length; index += 1) {
-    const labelIndex = lines[index].indexOf(label)
-    if (labelIndex < 0) continue
-
-    const inlineText = lines[index].slice(labelIndex + label.length)
-    const inlineStop = nextFieldLabelPattern.exec(inlineText)
-    const inlineNames = nameWords(inlineStop ? inlineText.slice(0, inlineStop.index) : inlineText)
-    if (inlineNames.length) {
-      result.push(...inlineNames)
-      continue
-    }
-
-    for (const candidate of lines.slice(index + 1, index + 4)) {
-      if (nextFieldLabelPattern.test(candidate) || dateLabelPattern.test(candidate) || /\d/.test(candidate)) break
-      const names = nameWords(candidate)
-      if (names.length) {
-        result.push(...names)
-        break
-      }
-    }
-  }
-
-  return result
-}
-
-function extractDocumentNumber(line: string) {
-  const candidates = [...line.matchAll(/(?:^|[^\d])(\d(?:[\d\s.,;:/()_-]*\d){7,9})(?!\d)/g)]
-    .map((match) => match[1].replace(/\D/g, ''))
-    .filter((number) => /^\d{8,10}$/.test(number))
-  return candidates[0] ?? ''
-}
-
-function extractIdentity(text: string) {
-  const lines = text.split(/\r?\n/).map(normalizeOcrLine).filter(Boolean)
-  let cedula = ''
-  for (let index = 0; index < lines.length; index += 1) {
-    const label = numberLabelPattern.exec(lines[index])
-    if (!label || label.index === undefined) continue
-
-    cedula = extractDocumentNumber(lines[index].slice(label.index + label[0].length))
-    if (cedula) break
-
-    for (const candidate of lines.slice(index + 1, index + 3)) {
-      if (nextFieldLabelPattern.test(candidate) || dateLabelPattern.test(candidate)) break
-      cedula = extractDocumentNumber(candidate)
-      if (cedula) break
-    }
-    if (cedula) break
-  }
-
-  const surnames = extractNamePart(lines, 'APELLIDOS')
-  const givenNames = extractNamePart(lines, 'NOMBRES')
-  const nombre = [...surnames, ...givenNames].join(' ')
-
-  return { cedula, nombre }
-}
-
-async function rotateImage(file: File, degrees: 90 | 270) {
+async function createOcrImages(file: File) {
   const image = await createImageBitmap(file)
-  const canvas = document.createElement('canvas')
-  canvas.width = image.height
-  canvas.height = image.width
-  const context = canvas.getContext('2d')
-  if (!context) {
+  const variants: Blob[] = []
+  const baseScale = Math.min(1, 1800 / Math.max(image.width, image.height))
+
+  try {
+    for (const degrees of [0, 90, 270] as const) {
+      const rotated = degrees !== 0
+      let scale = baseScale
+      let variant: Blob | null = null
+
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        const canvas = document.createElement('canvas')
+        canvas.width = Math.round((rotated ? image.height : image.width) * scale)
+        canvas.height = Math.round((rotated ? image.width : image.height) * scale)
+        const context = canvas.getContext('2d')
+        if (!context) throw new Error('No se pudo preparar la imagen para su análisis.')
+
+        context.translate(canvas.width / 2, canvas.height / 2)
+        context.rotate((degrees * Math.PI) / 180)
+        context.drawImage(
+          image,
+          -(image.width * scale) / 2,
+          -(image.height * scale) / 2,
+          image.width * scale,
+          image.height * scale,
+        )
+        variant = await canvasToJpeg(canvas, 0.72 - attempt * 0.08)
+        if (variant.size <= 1_100_000) break
+        scale *= 0.8
+      }
+
+      if (!variant || variant.size > 1_200_000) {
+        throw new Error('No se pudo reducir la imagen al tamaño permitido para el análisis.')
+      }
+      variants.push(variant)
+    }
+  } finally {
     image.close()
-    throw new Error('No fue posible preparar la imagen para su lectura.')
   }
-  context.translate(canvas.width / 2, canvas.height / 2)
-  context.rotate((degrees * Math.PI) / 180)
-  context.drawImage(image, -image.width / 2, -image.height / 2)
-  image.close()
-  return canvas
+
+  return variants
 }
 
 function readImage(file: File) {
@@ -136,6 +74,31 @@ function readImage(file: File) {
     reader.onerror = () => reject(new Error('No se pudo leer el archivo de imagen.'))
     reader.readAsDataURL(file)
   })
+}
+
+async function recognizeIdentity(images: Blob[]) {
+  const formData = new FormData()
+  for (const [index, image] of images.entries()) {
+    formData.append('images', image, `cedula-${index}.jpg`)
+  }
+
+  const response = await fetch('/api/ocr', { method: 'POST', body: formData })
+  const result = await response.json() as {
+    cedula?: unknown
+    nombre?: unknown
+    complete?: unknown
+    error?: unknown
+  }
+
+  if (!response.ok) {
+    throw new Error(typeof result.error === 'string' ? result.error : 'No fue posible analizar la foto.')
+  }
+
+  return {
+    cedula: typeof result.cedula === 'string' && /^\d{8,10}$/.test(result.cedula) ? result.cedula : '',
+    nombre: typeof result.nombre === 'string' ? result.nombre : '',
+    complete: result.complete === true,
+  }
 }
 
 function getSupabaseClient() {
@@ -176,7 +139,6 @@ export default function Home() {
   const [fotoCedula, setFotoCedula] = useState<string | null>(null)
   const [firmaData, setFirmaData] = useState<string | null>(null)
   const [ocrStatus, setOcrStatus] = useState<OcrStatus>('idle')
-  const [ocrProgress, setOcrProgress] = useState(0)
   const [alreadyRegistered, setAlreadyRegistered] = useState(false)
   const [hasHydrated, setHasHydrated] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -210,7 +172,6 @@ export default function Home() {
     setNombre('')
     setFotoCedula(null)
     setFirmaData(null)
-    setOcrProgress(0)
     sigCanvasRef.current?.clear()
 
     if (!file.type.startsWith('image/')) {
@@ -225,68 +186,32 @@ export default function Home() {
     }
 
     setOcrStatus('processing')
-    setOcrProgress(0)
 
     try {
       const preview = await readImage(file)
       if (requestId !== ocrRequestIdRef.current) return
       setFotoCedula(preview)
 
-      const worker = await Tesseract.createWorker('spa', undefined, {
-        logger: (message) => {
-          if (requestId === ocrRequestIdRef.current && message.status === 'recognizing text') {
-            setOcrProgress(Math.round(message.progress * 100))
-          }
-        },
-      })
-      let extracted: ReturnType<typeof extractIdentity>
-      try {
-        const recognize = async (image: File | HTMLCanvasElement) => {
-          const result = await worker.recognize(image)
-          return extractIdentity(result.data.text)
-        }
-
-        extracted = await recognize(file)
-        if (!extracted.cedula || !extracted.nombre) {
-          for (const degrees of [90, 270] as const) {
-            if (requestId !== ocrRequestIdRef.current) return
-            let rotatedImage: HTMLCanvasElement
-            try {
-              rotatedImage = await rotateImage(file, degrees)
-            } catch (rotationError) {
-              console.warn(`No se pudo analizar la imagen girada ${degrees} grados.`, rotationError)
-              continue
-            }
-            const rotatedExtraction = await recognize(rotatedImage)
-            if (
-              Number(Boolean(rotatedExtraction.cedula)) + Number(Boolean(rotatedExtraction.nombre)) >
-              Number(Boolean(extracted.cedula)) + Number(Boolean(extracted.nombre))
-            ) {
-              extracted = rotatedExtraction
-            }
-            if (extracted.cedula && extracted.nombre) break
-          }
-        }
-      } finally {
-        await worker.terminate()
-      }
+      const variants = await createOcrImages(file)
+      const extracted = await recognizeIdentity(variants)
 
       if (requestId !== ocrRequestIdRef.current) return
       setCedula(extracted.cedula)
       setNombre(extracted.nombre)
 
-      if (extracted.cedula && extracted.nombre) {
+      if (extracted.complete && extracted.cedula && extracted.nombre) {
         setOcrStatus('success')
       } else if (extracted.cedula || extracted.nombre) {
         setOcrStatus('partial')
       } else {
         setOcrStatus('error')
+        setErrorMsg('No se pudieron reconocer los datos. Toma una foto más nítida e inténtalo de nuevo.')
       }
     } catch (error) {
       if (requestId !== ocrRequestIdRef.current) return
-      console.error('No se pudo procesar la foto de la cédula.', error)
+      console.error('No se pudo procesar la foto mediante el OCR interno.', error)
       setOcrStatus('error')
-      setErrorMsg('No fue posible leer la imagen. Puedes volver a tomarla o ingresar los datos manualmente.')
+      setErrorMsg(error instanceof Error ? error.message : 'No fue posible analizar la foto. Inténtalo de nuevo.')
     }
   }
 
@@ -470,8 +395,10 @@ export default function Home() {
                       <Image src={fotoCedula} alt="Foto frontal de la cédula" width={560} height={360} unoptimized className="mx-auto max-h-52 max-w-full rounded-xl border border-slate-700 object-contain" />
                       {ocrStatus === 'processing' && (
                         <div role="status" className="space-y-2 text-sm text-cyan-300">
-                          <p>Procesando cédula real... {ocrProgress}%</p>
-                          <progress value={ocrProgress} max="100" className="h-2 w-full accent-indigo-500" />
+                          <p>Procesando cédula de forma segura...</p>
+                          <div className="mx-auto h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-slate-800">
+                            <div className="h-full w-1/3 animate-pulse rounded-full bg-cyan-400" />
+                          </div>
                         </div>
                       )}
                       {ocrStatus === 'success' && (
@@ -507,7 +434,7 @@ export default function Home() {
                   )}
                   <input id="foto-input" type="file" accept="image/*" capture="environment" onChange={handleFotoCapture} className="sr-only" />
                 </div>
-                <p className="text-xs leading-relaxed text-slate-500">El reconocimiento se procesa en este dispositivo. Revisa la cédula y confirma que la información detectada sea correcta.</p>
+                <p className="text-xs leading-relaxed text-slate-500">La imagen se procesa en el servidor de esta aplicación; no se envía a un proveedor OCR externo. Revisa y confirma los datos detectados.</p>
               </section>
 
               <div className="grid gap-4 sm:grid-cols-2">

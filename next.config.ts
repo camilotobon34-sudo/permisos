@@ -4,6 +4,14 @@ const nextConfig: NextConfig = {
   /* config options here */
   cacheComponents: true,
   partialPrefetching: true,
+  outputFileTracingIncludes: {
+    '/api/ocr': [
+      './node_modules/tesseract.js/src/worker-script/node/**/*',
+      './node_modules/tesseract.js/src/worker-script/**/*',
+      './node_modules/tesseract.js-core/**/*',
+      './node_modules/wasm-feature-detect/**/*',
+    ],
+  },
   turbopack: {
     rules: {
       "*.css": {
