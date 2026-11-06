@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react'
 import Link from 'next/link'
 import SignatureCanvas from 'react-signature-canvas'
 import { createClient } from '@supabase/supabase-js'
+import Tesseract from 'tesseract.js'
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
@@ -21,6 +22,10 @@ export default function Home() {
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  
+  // Estados para el lector de OCR
+  const [procesandoFoto, setProcesandoFoto] = useState(false)
+  const [mensajeOcr, setMensajeOcr] = useState('')
   const [leido, setLeido] = useState(false)
 
   const [showEntrenadorModal, setShowEntrenadorModal] = useState(false)
@@ -36,21 +41,58 @@ export default function Home() {
     }
   }, [])
 
-  // LLENADO AUTOMÁTICO DIRECTO Y LIMPIO
-  const handleFotoCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // LECTOR REAL OCR PARA CUALQUIER CÉDULA
+  const handleFotoCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
 
+    // 1. Mostrar la foto de inmediato
     const reader = new FileReader()
     reader.onloadend = () => {
-      const base64Image = reader.result as string
-      setFotoCedula(base64Image)
+      setFotoCedula(reader.result as string)
     }
     reader.readAsDataURL(file)
 
-    setCedula('1036943054')
-    setNombre('Camilo Tobón')
-    setLeido(true)
+    // 2. Iniciar el escaneo de IA
+    setProcesandoFoto(true)
+    setLeido(false)
+    setMensajeOcr('Iniciando motor de lectura...')
+    setCedula('')
+    setNombre('')
+
+    try {
+      const { data: { text } } = await Tesseract.recognize(
+        file,
+        'spa', // Idioma español
+        {
+          logger: m => {
+            if (m.status === 'recognizing text') {
+              setMensajeOcr(`Escaneando cédula: ${Math.round(m.progress * 100)}%`)
+            }
+          }
+        }
+      )
+
+      // 3. Extraer el número (Busca secuencias de 8 a 10 números)
+      const numerosEncontrados = text.match(/\b\d{8,11}\b/g)
+      if (numerosEncontrados && numerosEncontrados.length > 0) {
+        setCedula(numerosEncontrados[0])
+      }
+
+      // 4. Extraer posibles nombres (Palabras en mayúscula)
+      const palabrasMayusculas = text.match(/\b[A-ZÑÁÉÍÓÚ]{3,}\b/g)
+      if (palabrasMayusculas && palabrasMayusculas.length >= 2) {
+        // Une las primeras palabras en mayúscula que encuentre
+        setNombre(palabrasMayusculas.slice(0, 3).join(' '))
+      }
+
+    } catch (error) {
+      console.error('Error leyendo la cédula:', error)
+      setErrorMsg('No se pudo leer la cédula con claridad, por favor verifica los datos.')
+    } finally {
+      setProcesandoFoto(false)
+      setLeido(true)
+    }
   }
 
   const limpiarFirma = () => {
@@ -182,7 +224,7 @@ export default function Home() {
             <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">
               Registro Digital en Campo
             </h1>
-            <p className="text-slate-400 text-sm">Sube la foto de tu cédula para procesar los datos de identidad</p>
+            <p className="text-slate-400 text-sm">Sube la foto de tu cédula para procesar los datos de identidad con IA</p>
           </div>
 
           {success && (
@@ -226,7 +268,15 @@ export default function Home() {
                   {fotoCedula ? (
                     <div className="space-y-3">
                       <img src={fotoCedula} alt="Cédula capturada" className="h-32 mx-auto object-cover rounded-xl border border-slate-700" />
-                      {leido && <p className="text-xs text-emerald-400 font-semibold">✓ Cédula escaneada y datos extraídos correctamente</p>}
+                      
+                      {procesandoFoto && (
+                        <p className="text-xs font-bold text-cyan-400 animate-pulse">{mensajeOcr}</p>
+                      )}
+                      
+                      {!procesandoFoto && leido && (
+                        <p className="text-xs font-bold text-emerald-400">✓ Extracción completada</p>
+                      )}
+
                       <label htmlFor="foto-input" className="inline-block bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold px-4 py-2 rounded-xl cursor-pointer transition-all">
                         Cambiar Foto
                       </label>
@@ -250,6 +300,7 @@ export default function Home() {
                   <input
                     type="text"
                     required
+                    placeholder="Se extraerá de la foto..."
                     value={cedula}
                     onChange={(e) => setCedula(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -260,6 +311,7 @@ export default function Home() {
                   <input
                     type="text"
                     required
+                    placeholder="Se extraerá de la foto..."
                     value={nombre}
                     onChange={(e) => setNombre(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
