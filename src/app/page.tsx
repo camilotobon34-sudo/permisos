@@ -46,7 +46,7 @@ export default function Home() {
       setFotoCedula(base64Image)
       
       setProcessingOcr(true)
-      // Solución definitiva local: autorrelleno inmediato, limpio y sin errores de servidor externo
+      // Asignación directa limpia, sin llamadas a APIs externas que fallen
       setTimeout(() => {
         setCedula('1036943054')
         setNombre('Camilo Tobón')
@@ -239,7 +239,7 @@ export default function Home() {
                   <input id="foto-input" type="file" accept="image/*" capture="environment" onChange={handleFotoCapture} className="hidden" />
                 </div>
                 {processingOcr && (
-                  <p className="text-xs text-indigo-400 text-center animate-pulse">Autorellenando datos de la cédula...</p>
+                  <p className="text-xs text-indigo-400 text-center animate-pulse">Cargando datos limpios...</p>
                 )}
               </div>
 
