@@ -1,14 +1,134 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import type { ChangeEvent, FormEvent } from 'react'
 import Link from 'next/link'
+import Image from 'next/image'
 import SignatureCanvas from 'react-signature-canvas'
-import { createClient } from '@supabase/supabase-js'
 import Tesseract from 'tesseract.js'
+import { createClient } from '@supabase/supabase-js'
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
-const supabase = createClient(supabaseUrl, supabaseKey)
+type OcrStatus = 'idle' | 'processing' | 'success' | 'partial' | 'error'
+
+const STORAGE_KEY = 'asistencia_registrada_industrial'
+
+const ignoredNameWords = new Set([
+  'APELLIDO', 'APELLIDOS', 'NOMBRE', 'NOMBRES', 'IDENTIFICACION', 'PERSONAL',
+  'REPUBLICA', 'COLOMBIA', 'TARJETA', 'CEDULA', 'CIUDADANIA', 'NUMERO',
+  'DOCUMENTO', 'FECHA', 'NACIMIENTO', 'EXPEDICION', 'LUGAR', 'ESTATURA',
+  'SANGRE', 'SEXO', 'MASCULINO', 'FEMENINO', 'FIRMA', 'REGISTRADURIA',
+  'NACIONAL', 'ORGANIZACION', 'ELECTORAL', 'DE', 'DEL', 'LA', 'EL', 'LOS',
+  'LAS', 'Y',
+])
+
+function normalizeOcrLine(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/[^A-ZÑ0-9.\s,-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function nameWords(value: string) {
+  return normalizeOcrLine(value)
+    .replace(/\d/g, ' ')
+    .split(/\s+/)
+    .filter((word) => word.length > 1 && !ignoredNameWords.has(word))
+}
+
+function extractNamePart(lines: string[], label: 'APELLIDOS' | 'NOMBRES') {
+  const index = lines.findIndex((line) => line.includes(label))
+  if (index < 0) return []
+
+  const lineWords = nameWords(lines[index].replace(label, ''))
+  if (lineWords.length) return lineWords
+
+  for (const candidate of lines.slice(index + 1, index + 3)) {
+    const words = nameWords(candidate)
+    if (words.length >= 1 && !/\d/.test(candidate)) return words
+  }
+
+  return []
+}
+
+function extractIdentity(text: string) {
+  const lines = text.split(/\r?\n/).map(normalizeOcrLine).filter(Boolean)
+  const numberCandidates = lines.flatMap((line, index) => {
+    const isIdLine = /NUMERO|CEDULA|IDENTIFICACION|DOCUMENTO|NUIP/.test(line)
+    const isDateLine = /FECHA|NACIMIENTO|EXPEDICION|VENCIMIENTO/.test(line)
+    if (isDateLine) return []
+
+    const relatedLines = isIdLine ? lines.slice(index, index + 3) : [line]
+    return relatedLines.flatMap((candidate) =>
+      (candidate.match(/\d[\d\s.,-]{4,}\d/g) ?? [])
+        .map((number) => number.replace(/\D/g, ''))
+        .filter((number) => number.length >= 6 && number.length <= 12)
+        .map((number) => ({ number, priority: isIdLine ? 1 : 0 })),
+    )
+  })
+
+  const cedula = numberCandidates
+    .sort((a, b) => b.priority - a.priority || b.number.length - a.number.length)[0]?.number ?? ''
+
+  const surnames = extractNamePart(lines, 'APELLIDOS')
+  const givenNames = extractNamePart(lines, 'NOMBRES')
+  let nombre = [...surnames, ...givenNames].join(' ')
+
+  if (!nombre) {
+    const excludedLine = /REPUBLICA|COLOMBIA|IDENTIFICACION|PERSONAL|TARJETA|CEDULA|REGISTRADURIA|ELECTORAL|FECHA|NACIMIENTO|EXPEDICION|LUGAR|FIRMA|SEXO|SANGRE|ESTATURA/
+    nombre = lines
+      .filter((line) => !excludedLine.test(line) && !/\d/.test(line))
+      .map(nameWords)
+      .find((words) => words.length >= 2 && words.length <= 5)
+      ?.join(' ') ?? ''
+  }
+
+  return { cedula, nombre }
+}
+
+function readImage(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === 'string') resolve(reader.result)
+      else reject(new Error('No se pudo leer el archivo de imagen.'))
+    }
+    reader.onerror = () => reject(new Error('No se pudo leer el archivo de imagen.'))
+    reader.readAsDataURL(file)
+  })
+}
+
+function getSupabaseClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  if (!url || !key) {
+    throw new Error('Falta configurar la conexión de Supabase en las variables de entorno.')
+  }
+  return createClient(url, key)
+}
+
+function getCurrentPosition() {
+  return new Promise<GeolocationPosition>((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error('La geolocalización no está disponible en este dispositivo.'))
+      return
+    }
+    navigator.geolocation.getCurrentPosition(resolve, reject, {
+      enableHighAccuracy: true,
+      timeout: 5000,
+      maximumAge: 60_000,
+    })
+  })
+}
+
+function localDate(date: Date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
 
 export default function Home() {
   const [cedula, setCedula] = useState('')
@@ -17,90 +137,80 @@ export default function Home() {
   const [empresa, setEmpresa] = useState('')
   const [fotoCedula, setFotoCedula] = useState<string | null>(null)
   const [firmaData, setFirmaData] = useState<string | null>(null)
-  
+  const [ocrStatus, setOcrStatus] = useState<OcrStatus>('idle')
+  const [ocrProgress, setOcrProgress] = useState(0)
   const [alreadyRegistered, setAlreadyRegistered] = useState(false)
+  const [hasHydrated, setHasHydrated] = useState(false)
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
-  
-  const [procesandoFoto, setProcesandoFoto] = useState(false)
-  const [mensajeOcr, setMensajeOcr] = useState('')
-  const [leido, setLeido] = useState(false)
-
   const [showEntrenadorModal, setShowEntrenadorModal] = useState(false)
   const [codigoEntrenador, setCodigoEntrenador] = useState('')
   const [errorEntrenador, setErrorEntrenador] = useState('')
+  const [gpsAviso, setGpsAviso] = useState('')
 
   const sigCanvasRef = useRef<SignatureCanvas | null>(null)
 
   useEffect(() => {
-    const registrado = localStorage.getItem('asistencia_registrada_industrial')
-    if (registrado) {
-      setAlreadyRegistered(true)
-    }
+    const timer = window.setTimeout(() => {
+      setAlreadyRegistered(Boolean(localStorage.getItem(STORAGE_KEY)))
+      setHasHydrated(true)
+    }, 0)
+    return () => window.clearTimeout(timer)
   }, [])
 
-  const handleFotoCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
+  const handleFotoCapture = async (event: ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget
+    const file = input.files?.[0]
+    input.value = ''
     if (!file) return
 
-    const reader = new FileReader()
-    reader.onloadend = () => {
-      setFotoCedula(reader.result as string)
-    }
-    reader.readAsDataURL(file)
-
-    setProcesandoFoto(true)
-    setLeido(false)
-    setMensajeOcr('Escaneando documento...')
+    setErrorMsg(null)
     setCedula('')
     setNombre('')
+    setFirmaData(null)
+    sigCanvasRef.current?.clear()
+
+    if (!file.type.startsWith('image/')) {
+      setOcrStatus('error')
+      setErrorMsg('Selecciona una imagen válida de la parte frontal de la cédula.')
+      return
+    }
+    if (file.size > 12 * 1024 * 1024) {
+      setOcrStatus('error')
+      setErrorMsg('La imagen supera el límite de 12 MB. Toma una foto más liviana.')
+      return
+    }
+
+    setOcrStatus('processing')
+    setOcrProgress(0)
 
     try {
-      const { data: { text } } = await Tesseract.recognize(
-        file,
-        'spa',
-        {
-          logger: m => {
-            if (m.status === 'recognizing text') {
-              setMensajeOcr(`Analizando datos: ${Math.round(m.progress * 100)}%`)
-            }
+      const preview = await readImage(file)
+      setFotoCedula(preview)
+
+      const result = await Tesseract.recognize(file, 'spa', {
+        logger: (message) => {
+          if (message.status === 'recognizing text') {
+            setOcrProgress(Math.round(message.progress * 100))
           }
-        }
-      )
+        },
+      })
+      const extracted = extractIdentity(result.data.text)
+      setCedula(extracted.cedula)
+      setNombre(extracted.nombre)
 
-      console.log("Texto OCR obtenido:", text)
-      const textoLimpio = text.toUpperCase()
-
-      // 1. EXTRAER CÉDULA: Le quitamos los puntos al texto para que lea "1.036..." como "1036..."
-      const textoSinPuntos = textoLimpio.replace(/\./g, '')
-      const matchCedula = textoSinPuntos.match(/\b\d{8,11}\b/g)
-      if (matchCedula && matchCedula.length > 0) {
-        setCedula(matchCedula[0])
+      if (extracted.cedula && extracted.nombre) {
+        setOcrStatus('success')
+      } else if (extracted.cedula || extracted.nombre) {
+        setOcrStatus('partial')
+      } else {
+        setOcrStatus('error')
       }
-
-      // 2. EXTRAER NOMBRES: Filtramos toda la basura preimpresa de las tarjetas colombianas
-      const palabrasIgnoradas = [
-        "IDENTIFICACION", "PERSONAL", "REPUBLICA", "REPÚBLICA", "COLOMBIA", 
-        "TARJETA", "IDENTIDAD", "CEDULA", "CIUDADANIA", "NUMERO", "NÚMERO",
-        "APELLIDOS", "NOMBRES", "FIRMA", "NACIMIENTO", "ESTATURA", "SANGRE", 
-        "SEXO", "MASCULINO", "FEMENINO", "FECHA", "LUGAR", "DE", "LA", "EL"
-      ]
-      
-      const palabras = textoLimpio.match(/\b[A-ZÑÁÉÍÓÚ]{3,}\b/g) || []
-      const palabrasReales = palabras.filter(p => !palabrasIgnoradas.includes(p))
-
-      if (palabrasReales.length >= 2) {
-        // Une los nombres reales encontrados (Ej: TOBON MARULANDA JUAN CAMILO)
-        setNombre(palabrasReales.slice(0, 4).join(' '))
-      }
-
     } catch (error) {
-      console.error('Error leyendo la cédula:', error)
-      setMensajeOcr('Error de lectura')
-    } finally {
-      setProcesandoFoto(false)
-      setLeido(true)
+      console.error('No se pudo procesar la foto de la cédula.', error)
+      setOcrStatus('error')
+      setErrorMsg('No fue posible leer la imagen. Puedes volver a tomarla o ingresar los datos manualmente.')
     }
   }
 
@@ -110,78 +220,79 @@ export default function Home() {
   }
 
   const guardarFirma = () => {
-    if (sigCanvasRef.current?.isEmpty()) {
-      alert('Por favor realiza tu firma antes de continuar.')
+    const canvas = sigCanvasRef.current
+    if (!canvas || canvas.isEmpty()) {
+      setErrorMsg('Por favor realiza tu firma antes de confirmarla.')
       return
     }
-    const signatureURL = sigCanvasRef.current?.getTrimmedCanvas().toDataURL('image/png')
-    setFirmaData(signatureURL || null)
+    setFirmaData(canvas.getTrimmedCanvas().toDataURL('image/png'))
+    setErrorMsg(null)
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
     setErrorMsg(null)
+    setGpsAviso('')
 
     if (!fotoCedula) {
-      setErrorMsg('Debes tomar o subir la foto de la cédula.')
+      setErrorMsg('Debes tomar o subir la foto frontal de la cédula.')
       return
     }
-
     if (!cedula.trim() || !nombre.trim()) {
-      setErrorMsg('Por favor verifica que la cédula y el nombre estén completos.')
+      setErrorMsg('Verifica que el número de cédula y el nombre completo estén diligenciados.')
       return
     }
-
     if (!firmaData) {
-      setErrorMsg('Debes guardar tu firma digital.')
+      setErrorMsg('Debes firmar y confirmar la firma digital.')
       return
     }
 
     setLoading(true)
-
     try {
-      const fechaHoy = new Date().toISOString().split('T')[0]
-      const horaActual = new Date().toLocaleTimeString()
-
+      const now = new Date()
       let coordenadas = 'N/A'
-      if (navigator.geolocation) {
-        try {
-          const position: any = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { timeout: 5000 }))
-          coordenadas = `${position.coords.latitude}, ${position.coords.longitude}`
-        } catch (geoErr) {
-          console.log('GPS no disponible')
-        }
+      try {
+        const position = await getCurrentPosition()
+        coordenadas = `${position.coords.latitude}, ${position.coords.longitude}`
+      } catch {
+        setGpsAviso('No se obtuvo la ubicación. El registro continuará con GPS no disponible.')
       }
 
-      const { error } = await supabase.from('asistencias').insert([
-        {
-          cedula_extraida_ocr: cedula.trim(),
-          nombre_extraido_ocr: nombre.trim(),
-          empresa_nombre: empresa.trim() || 'N/A',
-          curso: curso,
-          foto_cedula_url: fotoCedula,
-          firma: firmaData,
-          fecha: fechaHoy,
-          hora: horaActual,
-          gps: coordenadas,
-          metodo: 'web_campo'
-        }
-      ])
+      const { error } = await getSupabaseClient().from('asistencias').insert({
+        cedula_extraida_ocr: cedula.trim(),
+        nombre_extraido_ocr: nombre.trim(),
+        empresa_nombre: empresa.trim() || 'N/A',
+        curso,
+        foto_cedula_url: fotoCedula,
+        firma: firmaData,
+        fecha: localDate(now),
+        hora: now.toLocaleTimeString('es-CO', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: false,
+        }),
+        gps: coordenadas,
+        metodo: 'web_campo',
+      })
 
       if (error) throw error
 
-      localStorage.setItem('asistencia_registrada_industrial', 'true')
+      localStorage.setItem(STORAGE_KEY, 'true')
       setSuccess(true)
       setAlreadyRegistered(true)
-    } catch (err: any) {
-      setErrorMsg('Error al registrar la asistencia. Inténtalo de nuevo.')
+    } catch (error) {
+      console.error('No se pudo guardar la asistencia en Supabase.', error)
+      setErrorMsg(error instanceof Error
+        ? `No se pudo guardar la asistencia: ${error.message}`
+        : 'No se pudo guardar la asistencia. Verifica tu conexión e inténtalo de nuevo.')
     } finally {
       setLoading(false)
     }
   }
 
-  const desbloquearConEntrenador = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const desbloquearConEntrenador = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
     setErrorEntrenador('')
 
     const codigo = codigoEntrenador.trim()
@@ -190,21 +301,25 @@ export default function Home() {
       return
     }
 
-    const { data } = await supabase
-      .from('entrenadores')
-      .select('*')
-      .eq('codigo', codigo)
-      .maybeSingle()
-
-    if (data) {
-      permitirDesbloqueo()
-    } else {
-      setErrorEntrenador('Código de entrenador incorrecto.')
+    try {
+      const { data, error } = await getSupabaseClient()
+        .from('entrenadores')
+        .select('id')
+        .eq('codigo', codigo)
+        .maybeSingle()
+      if (error) throw error
+      if (data) permitirDesbloqueo()
+      else setErrorEntrenador('Código de entrenador incorrecto.')
+    } catch (error) {
+      console.error('No se pudo validar el código del entrenador.', error)
+      setErrorEntrenador(error instanceof Error
+        ? `No se pudo validar el código: ${error.message}`
+        : 'No se pudo validar el código. Inténtalo de nuevo.')
     }
   }
 
   const permitirDesbloqueo = () => {
-    localStorage.removeItem('asistencia_registrada_industrial')
+    localStorage.removeItem(STORAGE_KEY)
     setAlreadyRegistered(false)
     setSuccess(false)
     setShowEntrenadorModal(false)
@@ -214,138 +329,125 @@ export default function Home() {
     setEmpresa('')
     setFotoCedula(null)
     setFirmaData(null)
-    setLeido(false)
+    setOcrStatus('idle')
+    setErrorMsg(null)
+    sigCanvasRef.current?.clear()
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white flex flex-col justify-between">
-      <nav className="border-b border-slate-800 bg-slate-900/60 backdrop-blur-md px-6 py-4 flex justify-between items-center">
-        <span className="font-bold text-indigo-400">🛡️ Control Industrial - Campo</span>
-        <div className="flex gap-4 text-sm font-medium">
-          <Link href="/" className="text-white bg-indigo-600 px-3 py-1.5 rounded-lg">Registro</Link>
-          <Link href="/admin" className="text-slate-400 hover:text-white px-3 py-1.5 rounded-lg transition-colors">Administrador</Link>
+    <div className="flex min-h-screen flex-col bg-slate-950 text-white">
+      <nav className="border-b border-slate-800 bg-slate-900/70 px-4 py-4 backdrop-blur sm:px-6">
+        <div className="mx-auto flex max-w-5xl items-center justify-between gap-4">
+          <Link href="/" className="font-bold tracking-tight text-indigo-300">
+            Control Industrial <span className="text-slate-500">/ Campo</span>
+          </Link>
+          <Link href="/admin" className="rounded-lg px-3 py-2 text-sm text-slate-400 transition hover:bg-slate-800 hover:text-white">
+            Administrador
+          </Link>
         </div>
       </nav>
 
-      <main className="flex-1 max-w-2xl w-full mx-auto p-4 sm:p-6 flex flex-col justify-center">
-        <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6">
-          <div className="text-center space-y-2">
-            <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">
-              Registro Digital en Campo
-            </h1>
-            <p className="text-slate-400 text-sm">El sistema extraerá automáticamente los datos de la cédula</p>
-          </div>
+      <main className="flex flex-1 items-center justify-center px-4 py-8 sm:px-6">
+        <section className="w-full max-w-2xl space-y-6 rounded-3xl border border-slate-800 bg-slate-900 p-5 shadow-2xl shadow-black/20 sm:p-8">
+          <header className="space-y-2 text-center">
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-indigo-400">Registro de participante</p>
+            <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Asistencia en campo</h1>
+            <p className="text-sm text-slate-400">Captura la cédula, verifica los datos y firma tu asistencia.</p>
+          </header>
 
           {success && (
-            <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-xl text-center font-medium">
+            <div role="status" className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-center text-sm font-medium text-emerald-300">
               ¡Asistencia registrada con éxito! Muchas gracias.
             </div>
           )}
-
           {errorMsg && (
-            <div className="p-4 bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-xl text-center text-sm">
+            <div role="alert" className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-center text-sm text-rose-300">
               {errorMsg}
             </div>
           )}
+          {gpsAviso && <p className="text-center text-xs text-amber-300">{gpsAviso}</p>}
 
-          {alreadyRegistered ? (
-            <div className="bg-slate-950 border border-slate-800 rounded-2xl p-8 text-center space-y-6">
-              <div className="w-16 h-16 bg-amber-500/10 text-amber-400 rounded-full flex items-center justify-center mx-auto text-2xl border border-amber-500/20">
-                🔒
-              </div>
+          {!hasHydrated ? (
+            <div role="status" className="rounded-2xl border border-slate-800 bg-slate-950 p-8 text-center text-sm text-slate-400">
+              Preparando el registro seguro...
+            </div>
+          ) : alreadyRegistered ? (
+            <div className="space-y-5 rounded-2xl border border-slate-800 bg-slate-950 p-6 text-center sm:p-8">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-amber-500/20 bg-amber-500/10 text-2xl text-amber-300" aria-hidden="true">🔒</div>
               <div className="space-y-2">
-                <h2 className="text-xl font-bold text-amber-400">Dispositivo ya registrado</h2>
-                <p className="text-slate-400 text-sm">
-                  Ya se registró una asistencia desde este dispositivo. Por seguridad, solo se permite 1 registro por celular.
-                </p>
+                <h2 className="text-xl font-bold text-amber-300">Dispositivo ya registrado</h2>
+                <p className="text-sm text-slate-400">Ya se registró una asistencia desde este dispositivo. Para registrar otra, solicita el código a tu entrenador.</p>
               </div>
-
-              <button
-                onClick={() => setShowEntrenadorModal(true)}
-                className="text-xs text-indigo-400 hover:text-indigo-300 underline cursor-pointer"
-              >
-                ¿Eres Entrenador? Ingresa tu código para registrar otro participante
+              <button type="button" onClick={() => setShowEntrenadorModal(true)} className="text-sm font-medium text-indigo-300 underline underline-offset-4 hover:text-indigo-200">
+                Ingresar código de entrenador
               </button>
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-6">
-              <div className="space-y-3">
-                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400">
-                  1. Foto de la Cédula (Frontal) *
+              <section className="space-y-3">
+                <label htmlFor="foto-input" className="block text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  1. Foto frontal de la cédula <span className="text-rose-400">*</span>
                 </label>
-                <div className="border-2 border-dashed border-slate-800 rounded-2xl p-6 text-center bg-slate-950/50 hover:border-indigo-500/50 transition-colors">
+                <div className="rounded-2xl border border-dashed border-slate-700 bg-slate-950/70 p-5 text-center transition hover:border-indigo-500/60">
                   {fotoCedula ? (
-                    <div className="space-y-3">
-                      <img src={fotoCedula} alt="Cédula capturada" className="h-32 mx-auto object-cover rounded-xl border border-slate-700" />
-                      
-                      {procesandoFoto && (
-                        <p className="text-xs font-bold text-cyan-400 animate-pulse">{mensajeOcr}</p>
+                    <div className="space-y-4">
+                      <Image src={fotoCedula} alt="Foto frontal de la cédula" width={560} height={360} unoptimized className="mx-auto max-h-52 max-w-full rounded-xl border border-slate-700 object-contain" />
+                      {ocrStatus === 'processing' && (
+                        <div role="status" className="space-y-2 text-sm text-cyan-300">
+                          <p>Analizando el documento... {ocrProgress}%</p>
+                          <progress value={ocrProgress} max="100" className="h-2 w-full accent-indigo-500" />
+                        </div>
                       )}
-                      
-                      {!procesandoFoto && leido && (
-                        <p className="text-xs font-bold text-emerald-400">✓ Extracción inteligente completada</p>
+                      {ocrStatus === 'success' && (
+                        <p role="status" className="text-sm font-semibold text-emerald-300">
+                          ✓ Cédula escaneada y datos extraídos correctamente. Verifica los datos antes de continuar.
+                        </p>
                       )}
-
-                      <label htmlFor="foto-input" className="inline-block bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold px-4 py-2 rounded-xl cursor-pointer transition-all">
-                        Cambiar Foto
+                      {ocrStatus === 'partial' && (
+                        <p role="status" className="text-sm font-medium text-amber-300">
+                          ✓ Datos detectados automáticamente. Completa o verifica los campos resaltados.
+                        </p>
+                      )}
+                      {ocrStatus === 'error' && !errorMsg && (
+                        <p role="status" className="text-sm text-amber-300">Foto cargada. El OCR no detectó los datos; puedes ingresarlos manualmente.</p>
+                      )}
+                      <label htmlFor="foto-input" className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-slate-800 px-4 py-2.5 text-sm font-semibold transition hover:bg-slate-700">
+                        Cambiar foto
                       </label>
                     </div>
                   ) : (
-                    <div className="space-y-3">
-                      <div className="text-3xl">📷</div>
-                      <div className="text-sm text-slate-300">Toma una foto clara de tu cédula</div>
-                      <label htmlFor="foto-input" className="inline-block bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-4 py-2.5 rounded-xl cursor-pointer transition-all shadow-lg shadow-indigo-600/20">
-                        Tomar / Subir Foto
+                    <div className="space-y-3 py-2">
+                      <div className="text-3xl" aria-hidden="true">📷</div>
+                      <p className="text-sm text-slate-300">Toma una foto nítida, frontal y bien iluminada.</p>
+                      <label htmlFor="foto-input" className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-indigo-600 px-5 py-3 text-sm font-semibold shadow-lg shadow-indigo-950/50 transition hover:bg-indigo-500">
+                        Tomar o subir foto
                       </label>
                     </div>
                   )}
-                  <input id="foto-input" type="file" accept="image/*" capture="environment" onChange={handleFotoCapture} className="hidden" />
+                  <input id="foto-input" type="file" accept="image/*" capture="environment" onChange={handleFotoCapture} className="sr-only" />
+                </div>
+                <p className="text-xs leading-relaxed text-slate-500">El reconocimiento se procesa en este dispositivo. Revisa la cédula y confirma que la información detectada sea correcta.</p>
+              </section>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <label htmlFor="cedula" className="block text-xs font-semibold uppercase tracking-wider text-slate-400">Número de cédula <span className="text-rose-400">*</span></label>
+                  <input id="cedula" type="text" inputMode="numeric" autoComplete="off" required placeholder="Verifica el número" value={cedula} onChange={(event) => setCedula(event.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20" />
+                </div>
+                <div className="space-y-2">
+                  <label htmlFor="nombre" className="block text-xs font-semibold uppercase tracking-wider text-slate-400">Nombre completo <span className="text-rose-400">*</span></label>
+                  <input id="nombre" type="text" autoComplete="name" required placeholder="Verifica el nombre" value={nombre} onChange={(event) => setNombre(event.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20" />
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Número de Cédula *</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Se extraerá de la foto..."
-                    value={cedula}
-                    onChange={(e) => setCedula(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <label htmlFor="empresa" className="block text-xs font-semibold uppercase tracking-wider text-slate-400">Empresa / contratista</label>
+                  <input id="empresa" type="text" autoComplete="organization" placeholder="Nombre de la empresa" value={empresa} onChange={(event) => setEmpresa(event.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20" />
                 </div>
-                <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Nombre Completo *</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Se extraerá de la foto..."
-                    value={nombre}
-                    onChange={(e) => setNombre(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Empresa / Contratista</label>
-                  <input
-                    type="text"
-                    placeholder="Ej: Industrial S.A.S."
-                    value={empresa}
-                    onChange={(e) => setEmpresa(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Curso *</label>
-                  <select
-                    value={curso}
-                    onChange={(e) => setCurso(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  >
+                <div className="space-y-2">
+                  <label htmlFor="curso" className="block text-xs font-semibold uppercase tracking-wider text-slate-400">Curso <span className="text-rose-400">*</span></label>
+                  <select id="curso" required value={curso} onChange={(event) => setCurso(event.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20">
                     <option value="Trabajo en alturas – Trabajador autorizado">Trabajo en alturas – Trabajador autorizado</option>
                     <option value="Trabajo en alturas – Coordinador">Trabajo en alturas – Coordinador</option>
                     <option value="Reentrenamiento sectorial – Trabajo en alturas">Reentrenamiento sectorial – Trabajo en alturas</option>
@@ -357,85 +459,48 @@ export default function Home() {
                 </div>
               </div>
 
-              <div className="space-y-3">
-                <div className="flex justify-between items-center">
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400">
-                    2. Firma Digital *
-                  </label>
-                  <button type="button" onClick={limpiarFirma} className="text-xs text-rose-400 hover:underline">
-                    Limpiar firma
-                  </button>
+              <section className="space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400">2. Firma digital <span className="text-rose-400">*</span></label>
+                  <button type="button" onClick={limpiarFirma} className="text-xs font-medium text-rose-300 hover:text-rose-200">Limpiar firma</button>
                 </div>
-                <div className="bg-white rounded-2xl overflow-hidden border border-slate-700">
-                  <SignatureCanvas
-                    ref={sigCanvasRef}
-                    penColor="black"
-                    canvasProps={{ className: 'w-full h-40 cursor-crosshair bg-white' }}
-                  />
+                <div className="overflow-hidden rounded-2xl border border-slate-700 bg-white">
+                  <SignatureCanvas ref={sigCanvasRef} penColor="#0f172a" canvasProps={{ className: 'h-40 w-full cursor-crosshair bg-white', 'aria-label': 'Área para firmar' }} />
                 </div>
-                <button
-                  type="button"
-                  onClick={guardarFirma}
-                  className="w-full bg-slate-800 hover:bg-slate-700 text-white font-semibold py-2 rounded-xl text-xs transition-all cursor-pointer"
-                >
-                  Confirmar Firma
+                <button type="button" onClick={guardarFirma} className="w-full rounded-xl bg-slate-800 py-2.5 text-sm font-semibold transition hover:bg-slate-700">
+                  Confirmar firma
                 </button>
-                {firmaData && <p className="text-xs text-emerald-400 text-center">✓ Firma guardada correctamente</p>}
-              </div>
+                {firmaData && <p role="status" className="text-center text-xs font-medium text-emerald-300">✓ Firma guardada correctamente</p>}
+              </section>
 
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-3.5 rounded-2xl transition-all shadow-lg shadow-indigo-600/20 cursor-pointer disabled:opacity-50"
-              >
-                {loading ? 'Registrando...' : 'Firmar y Registrar Asistencia'}
+              <button type="submit" disabled={loading || ocrStatus === 'processing'} className="w-full rounded-2xl bg-indigo-600 py-3.5 font-semibold shadow-lg shadow-indigo-950/50 transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50">
+                {loading ? 'Guardando asistencia...' : 'Firmar y registrar asistencia'}
               </button>
             </form>
           )}
-        </div>
+        </section>
       </main>
 
       {showEntrenadorModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-900 border border-slate-800 p-6 rounded-3xl max-w-sm w-full space-y-4">
-            <h3 className="text-lg font-bold text-center">🔓 Acceso de Entrenador</h3>
-            <p className="text-xs text-slate-400 text-center">Ingresa tu código para desbloquear un nuevo registro.</p>
-            
-            {errorEntrenador && (
-              <div className="p-2 bg-rose-500/10 text-rose-400 text-xs rounded-lg text-center">{errorEntrenador}</div>
-            )}
-
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm" role="presentation">
+          <section role="dialog" aria-modal="true" aria-labelledby="trainer-title" className="w-full max-w-sm space-y-4 rounded-3xl border border-slate-800 bg-slate-900 p-6 shadow-2xl">
+            <h2 id="trainer-title" className="text-center text-lg font-bold">Acceso de entrenador</h2>
+            <p className="text-center text-sm text-slate-400">Ingresa tu código para habilitar un nuevo registro.</p>
+            {errorEntrenador && <p role="alert" className="rounded-lg bg-rose-500/10 p-3 text-center text-xs text-rose-300">{errorEntrenador}</p>}
             <form onSubmit={desbloquearConEntrenador} className="space-y-4">
-              <input
-                type="text"
-                required
-                placeholder="Ej: ENT-01"
-                value={codigoEntrenador}
-                onChange={(e) => setCodigoEntrenador(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 uppercase"
-              />
+              <label htmlFor="codigo-entrenador" className="sr-only">Código de entrenador</label>
+              <input id="codigo-entrenador" type="text" required autoComplete="off" placeholder="Código de entrenador" value={codigoEntrenador} onChange={(event) => setCodigoEntrenador(event.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm uppercase text-white outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20" />
               <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowEntrenadorModal(false)}
-                  className="flex-1 bg-slate-800 hover:bg-slate-700 py-2.5 rounded-xl text-xs font-semibold cursor-pointer"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="flex-1 bg-indigo-600 hover:bg-indigo-500 py-2.5 rounded-xl text-xs font-semibold cursor-pointer shadow-lg shadow-indigo-600/20"
-                >
-                  Desbloquear
-                </button>
+                <button type="button" onClick={() => setShowEntrenadorModal(false)} className="flex-1 rounded-xl bg-slate-800 py-2.5 text-sm font-semibold transition hover:bg-slate-700">Cancelar</button>
+                <button type="submit" className="flex-1 rounded-xl bg-indigo-600 py-2.5 text-sm font-semibold transition hover:bg-indigo-500">Desbloquear</button>
               </div>
             </form>
-          </div>
+          </section>
         </div>
       )}
 
-      <footer className="py-6 text-center text-xs text-slate-600">
-        Control de Asistencia Industrial • Sistema Seguro
+      <footer className="px-4 py-5 text-center text-xs text-slate-600">
+        Control de Asistencia Industrial · Registro seguro en campo
       </footer>
     </div>
   )
