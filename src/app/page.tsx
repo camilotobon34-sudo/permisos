@@ -6,6 +6,7 @@ import Link from 'next/link'
 import Image from 'next/image'
 import SignatureCanvas from 'react-signature-canvas'
 import { createClient } from '@supabase/supabase-js'
+import { sanitizeColombianName } from '@/lib/identity-ocr'
 
 type OcrStatus = 'idle' | 'processing' | 'success' | 'partial' | 'error'
 
@@ -94,11 +95,13 @@ async function recognizeIdentity(images: Blob[]) {
     throw new Error(typeof result.error === 'string' ? result.error : 'No fue posible analizar la foto.')
   }
 
-  return {
-    cedula: typeof result.cedula === 'string' && /^\d{8,10}$/.test(result.cedula) ? result.cedula : '',
-    nombre: typeof result.nombre === 'string' ? result.nombre : '',
-    complete: result.complete === true,
-  }
+  const cedula = typeof result.cedula === 'string' && /^\d{8,10}$/.test(result.cedula)
+    ? result.cedula
+    : ''
+  const nombre = typeof result.nombre === 'string' ? sanitizeColombianName(result.nombre) : ''
+  const complete = result.complete === true && Boolean(cedula) && nombre.split(' ').length >= 2
+
+  return complete ? { cedula, nombre, complete } : { cedula: '', nombre: '', complete: false }
 }
 
 function getSupabaseClient() {
@@ -151,6 +154,20 @@ export default function Home() {
 
   const sigCanvasRef = useRef<SignatureCanvas | null>(null)
   const ocrRequestIdRef = useRef(0)
+  const cedulaInputRef = useRef<HTMLInputElement | null>(null)
+  const nombreInputRef = useRef<HTMLInputElement | null>(null)
+  const cedulaManuallyEditedRef = useRef(false)
+  const nombreManuallyEditedRef = useRef(false)
+
+  const focusFirstEmptyIdentityField = () => {
+    window.requestAnimationFrame(() => {
+      if (!cedulaInputRef.current?.value.trim()) {
+        cedulaInputRef.current?.focus()
+      } else if (!nombreInputRef.current?.value.trim()) {
+        nombreInputRef.current?.focus()
+      }
+    })
+  }
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -167,6 +184,8 @@ export default function Home() {
     if (!file) return
 
     const requestId = ++ocrRequestIdRef.current
+    cedulaManuallyEditedRef.current = false
+    nombreManuallyEditedRef.current = false
     setErrorMsg(null)
     setCedula('')
     setNombre('')
@@ -177,11 +196,13 @@ export default function Home() {
     if (!file.type.startsWith('image/')) {
       setOcrStatus('error')
       setErrorMsg('Selecciona una imagen válida de la parte frontal de la cédula.')
+      focusFirstEmptyIdentityField()
       return
     }
     if (file.size > 12 * 1024 * 1024) {
       setOcrStatus('error')
       setErrorMsg('La imagen supera el límite de 12 MB. Toma una foto más liviana.')
+      focusFirstEmptyIdentityField()
       return
     }
 
@@ -196,22 +217,32 @@ export default function Home() {
       const extracted = await recognizeIdentity(variants)
 
       if (requestId !== ocrRequestIdRef.current) return
-      setCedula(extracted.cedula)
-      setNombre(extracted.nombre)
-
-      if (extracted.complete && extracted.cedula && extracted.nombre) {
-        setOcrStatus('success')
-      } else if (extracted.cedula || extracted.nombre) {
-        setOcrStatus('partial')
-      } else {
+      if (!extracted.complete) {
         setOcrStatus('error')
-        setErrorMsg('No se pudieron reconocer los datos. Toma una foto más nítida e inténtalo de nuevo.')
+        setErrorMsg('No se pudieron reconocer los datos. Puedes escribirlos manualmente o tomar otra foto.')
+        focusFirstEmptyIdentityField()
+        return
+      }
+
+      const currentCedula = cedulaInputRef.current?.value ?? ''
+      const currentNombre = nombreInputRef.current?.value ?? ''
+      const finalCedula = cedulaManuallyEditedRef.current ? currentCedula : extracted.cedula
+      const finalNombre = nombreManuallyEditedRef.current ? currentNombre : extracted.nombre
+      setCedula(finalCedula)
+      setNombre(finalNombre)
+
+      if (finalCedula.trim() && finalNombre.trim()) {
+        setOcrStatus('success')
+      } else {
+        setOcrStatus('partial')
+        focusFirstEmptyIdentityField()
       }
     } catch (error) {
       if (requestId !== ocrRequestIdRef.current) return
       console.error('No se pudo procesar la foto mediante el OCR interno.', error)
       setOcrStatus('error')
       setErrorMsg(error instanceof Error ? error.message : 'No fue posible analizar la foto. Inténtalo de nuevo.')
+      focusFirstEmptyIdentityField()
     }
   }
 
@@ -440,12 +471,12 @@ export default function Home() {
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <label htmlFor="cedula" className="block text-xs font-semibold uppercase tracking-wider text-slate-400">Número de cédula <span className="text-rose-400">*</span></label>
-                  <input id="cedula" type="text" inputMode="numeric" autoComplete="off" required placeholder="Verifica el número" value={cedula} onChange={(event) => setCedula(event.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20" />
+                  <input ref={cedulaInputRef} id="cedula" type="text" inputMode="numeric" autoComplete="off" required placeholder="Escribe tu número de cédula" value={cedula} onChange={(event) => { cedulaManuallyEditedRef.current = true; setCedula(event.target.value) }} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20" />
                   <p className="text-xs text-slate-500">Si no se detectó, escribe los 8 a 10 dígitos que aparecen en la cédula.</p>
                 </div>
                 <div className="space-y-2">
                   <label htmlFor="nombre" className="block text-xs font-semibold uppercase tracking-wider text-slate-400">Nombre completo <span className="text-rose-400">*</span></label>
-                  <input id="nombre" type="text" autoComplete="name" required placeholder="Verifica el nombre" value={nombre} onChange={(event) => setNombre(event.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20" />
+                  <input ref={nombreInputRef} id="nombre" type="text" autoComplete="name" required placeholder="Escribe tu nombre completo" value={nombre} onChange={(event) => { nombreManuallyEditedRef.current = true; setNombre(event.target.value) }} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20" />
                   <p className="text-xs text-slate-500">Confirma que los nombres y apellidos coincidan con el documento.</p>
                 </div>
               </div>

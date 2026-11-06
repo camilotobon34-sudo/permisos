@@ -121,10 +121,11 @@ export async function POST(request: Request) {
       if (foundHighConfidence) break
     }
 
+    const complete = scoreIdentity(best).complete
     return jsonResponse({
-      cedula: best.cedula,
-      nombre: best.nombre,
-      complete: scoreIdentity(best).complete,
+      cedula: complete ? best.cedula : '',
+      nombre: complete ? best.nombre : '',
+      complete,
     })
   } catch (error) {
     console.error('No se pudo procesar la imagen en el servicio OCR interno.', error)

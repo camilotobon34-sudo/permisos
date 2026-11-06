@@ -36,6 +36,10 @@ function nameWords(value: string) {
     .filter((word) => /^[A-Z]{2,}$/.test(word) && !ignoredNameWords.has(word))
 }
 
+export function sanitizeColombianName(value: string) {
+  return nameWords(value).join(' ')
+}
+
 function extractNamePart(lines: string[], label: 'APELLIDOS' | 'NOMBRES') {
   const result: string[] = []
   for (let index = 0; index < lines.length; index += 1) {
