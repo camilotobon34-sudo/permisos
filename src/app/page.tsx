@@ -19,7 +19,6 @@ export default function Home() {
   
   const [alreadyRegistered, setAlreadyRegistered] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [processingOcr, setProcessingOcr] = useState(false)
   const [success, setSuccess] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
@@ -36,22 +35,14 @@ export default function Home() {
     }
   }, [])
 
-  const handleFotoCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFotoCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
 
     const reader = new FileReader()
-    reader.onloadend = async () => {
+    reader.onloadend = () => {
       const base64Image = reader.result as string
       setFotoCedula(base64Image)
-      
-      setProcessingOcr(true)
-      // Asignación directa limpia, sin llamadas a APIs externas que fallen
-      setTimeout(() => {
-        setCedula('1036943054')
-        setNombre('Camilo Tobón')
-        setProcessingOcr(false)
-      }, 300)
     }
     reader.readAsDataURL(file)
   }
@@ -76,6 +67,11 @@ export default function Home() {
 
     if (!fotoCedula) {
       setErrorMsg('Debes tomar o subir la foto de la cédula.')
+      return
+    }
+
+    if (!cedula.trim() || !nombre.trim()) {
+      setErrorMsg('Por favor ingresa tu número de cédula y tu nombre.')
       return
     }
 
@@ -179,7 +175,7 @@ export default function Home() {
             <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">
               Registro Digital en Campo
             </h1>
-            <p className="text-slate-400 text-sm">Toma foto de tu cédula, verifica tus datos y firma</p>
+            <p className="text-slate-400 text-sm">Sube tu cédula, escribe tus datos y firma</p>
           </div>
 
           {success && (
@@ -238,9 +234,6 @@ export default function Home() {
                   )}
                   <input id="foto-input" type="file" accept="image/*" capture="environment" onChange={handleFotoCapture} className="hidden" />
                 </div>
-                {processingOcr && (
-                  <p className="text-xs text-indigo-400 text-center animate-pulse">Cargando datos limpios...</p>
-                )}
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -260,7 +253,7 @@ export default function Home() {
                   <input
                     type="text"
                     required
-                    placeholder="Ej: Juan Camilo Tobón"
+                    placeholder="Ej: Camilo Tobón"
                     value={nombre}
                     onChange={(e) => setNombre(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
