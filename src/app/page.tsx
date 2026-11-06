@@ -6,64 +6,8 @@ import Link from 'next/link'
 import Image from 'next/image'
 import SignatureCanvas from 'react-signature-canvas'
 import { createClient } from '@supabase/supabase-js'
-import { sanitizeColombianName } from '@/lib/identity-ocr'
-
-type OcrStatus = 'idle' | 'processing' | 'success' | 'partial' | 'error'
 
 const STORAGE_KEY = 'asistencia_registrada_industrial'
-
-function canvasToJpeg(canvas: HTMLCanvasElement, quality: number) {
-  return new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (blob) resolve(blob)
-      else reject(new Error('No se pudo preparar la imagen para su análisis.'))
-    }, 'image/jpeg', quality)
-  })
-}
-
-async function createOcrImages(file: File) {
-  const image = await createImageBitmap(file)
-  const variants: Blob[] = []
-  const baseScale = Math.min(1, 1800 / Math.max(image.width, image.height))
-
-  try {
-    for (const degrees of [0, 90, 270] as const) {
-      const rotated = degrees !== 0
-      let scale = baseScale
-      let variant: Blob | null = null
-
-      for (let attempt = 0; attempt < 4; attempt += 1) {
-        const canvas = document.createElement('canvas')
-        canvas.width = Math.round((rotated ? image.height : image.width) * scale)
-        canvas.height = Math.round((rotated ? image.width : image.height) * scale)
-        const context = canvas.getContext('2d')
-        if (!context) throw new Error('No se pudo preparar la imagen para su análisis.')
-
-        context.translate(canvas.width / 2, canvas.height / 2)
-        context.rotate((degrees * Math.PI) / 180)
-        context.drawImage(
-          image,
-          -(image.width * scale) / 2,
-          -(image.height * scale) / 2,
-          image.width * scale,
-          image.height * scale,
-        )
-        variant = await canvasToJpeg(canvas, 0.72 - attempt * 0.08)
-        if (variant.size <= 1_100_000) break
-        scale *= 0.8
-      }
-
-      if (!variant || variant.size > 1_200_000) {
-        throw new Error('No se pudo reducir la imagen al tamaño permitido para el análisis.')
-      }
-      variants.push(variant)
-    }
-  } finally {
-    image.close()
-  }
-
-  return variants
-}
 
 function readImage(file: File) {
   return new Promise<string>((resolve, reject) => {
@@ -75,33 +19,6 @@ function readImage(file: File) {
     reader.onerror = () => reject(new Error('No se pudo leer el archivo de imagen.'))
     reader.readAsDataURL(file)
   })
-}
-
-async function recognizeIdentity(images: Blob[]) {
-  const formData = new FormData()
-  for (const [index, image] of images.entries()) {
-    formData.append('images', image, `cedula-${index}.jpg`)
-  }
-
-  const response = await fetch('/api/ocr', { method: 'POST', body: formData })
-  const result = await response.json() as {
-    cedula?: unknown
-    nombre?: unknown
-    complete?: unknown
-    error?: unknown
-  }
-
-  if (!response.ok) {
-    throw new Error(typeof result.error === 'string' ? result.error : 'No fue posible analizar la foto.')
-  }
-
-  const cedula = typeof result.cedula === 'string' && /^\d{8,10}$/.test(result.cedula)
-    ? result.cedula
-    : ''
-  const nombre = typeof result.nombre === 'string' ? sanitizeColombianName(result.nombre) : ''
-  const complete = result.complete === true && Boolean(cedula) && nombre.split(' ').length >= 2
-
-  return complete ? { cedula, nombre, complete } : { cedula: '', nombre: '', complete: false }
 }
 
 function getSupabaseClient() {
@@ -141,7 +58,6 @@ export default function Home() {
   const [empresa, setEmpresa] = useState('')
   const [fotoCedula, setFotoCedula] = useState<string | null>(null)
   const [firmaData, setFirmaData] = useState<string | null>(null)
-  const [ocrStatus, setOcrStatus] = useState<OcrStatus>('idle')
   const [alreadyRegistered, setAlreadyRegistered] = useState(false)
   const [hasHydrated, setHasHydrated] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -153,19 +69,13 @@ export default function Home() {
   const [gpsAviso, setGpsAviso] = useState('')
 
   const sigCanvasRef = useRef<SignatureCanvas | null>(null)
-  const ocrRequestIdRef = useRef(0)
+  const photoRequestIdRef = useRef(0)
   const cedulaInputRef = useRef<HTMLInputElement | null>(null)
   const nombreInputRef = useRef<HTMLInputElement | null>(null)
-  const cedulaManuallyEditedRef = useRef(false)
-  const nombreManuallyEditedRef = useRef(false)
 
-  const focusFirstEmptyIdentityField = () => {
+  const focusCedulaField = () => {
     window.requestAnimationFrame(() => {
-      if (!cedulaInputRef.current?.value.trim()) {
-        cedulaInputRef.current?.focus()
-      } else if (!nombreInputRef.current?.value.trim()) {
-        nombreInputRef.current?.focus()
-      }
+      cedulaInputRef.current?.focus()
     })
   }
 
@@ -183,9 +93,7 @@ export default function Home() {
     input.value = ''
     if (!file) return
 
-    const requestId = ++ocrRequestIdRef.current
-    cedulaManuallyEditedRef.current = false
-    nombreManuallyEditedRef.current = false
+    const requestId = ++photoRequestIdRef.current
     setErrorMsg(null)
     setCedula('')
     setNombre('')
@@ -194,55 +102,26 @@ export default function Home() {
     sigCanvasRef.current?.clear()
 
     if (!file.type.startsWith('image/')) {
-      setOcrStatus('error')
       setErrorMsg('Selecciona una imagen válida de la parte frontal de la cédula.')
-      focusFirstEmptyIdentityField()
+      focusCedulaField()
       return
     }
     if (file.size > 12 * 1024 * 1024) {
-      setOcrStatus('error')
       setErrorMsg('La imagen supera el límite de 12 MB. Toma una foto más liviana.')
-      focusFirstEmptyIdentityField()
+      focusCedulaField()
       return
     }
 
-    setOcrStatus('processing')
-
     try {
       const preview = await readImage(file)
-      if (requestId !== ocrRequestIdRef.current) return
+      if (requestId !== photoRequestIdRef.current) return
       setFotoCedula(preview)
-
-      const variants = await createOcrImages(file)
-      const extracted = await recognizeIdentity(variants)
-
-      if (requestId !== ocrRequestIdRef.current) return
-      if (!extracted.complete) {
-        setOcrStatus('error')
-        setErrorMsg('No se pudieron reconocer los datos. Puedes escribirlos manualmente o tomar otra foto.')
-        focusFirstEmptyIdentityField()
-        return
-      }
-
-      const currentCedula = cedulaInputRef.current?.value ?? ''
-      const currentNombre = nombreInputRef.current?.value ?? ''
-      const finalCedula = cedulaManuallyEditedRef.current ? currentCedula : extracted.cedula
-      const finalNombre = nombreManuallyEditedRef.current ? currentNombre : extracted.nombre
-      setCedula(finalCedula)
-      setNombre(finalNombre)
-
-      if (finalCedula.trim() && finalNombre.trim()) {
-        setOcrStatus('success')
-      } else {
-        setOcrStatus('partial')
-        focusFirstEmptyIdentityField()
-      }
+      focusCedulaField()
     } catch (error) {
-      if (requestId !== ocrRequestIdRef.current) return
-      console.error('No se pudo procesar la foto mediante el OCR interno.', error)
-      setOcrStatus('error')
-      setErrorMsg(error instanceof Error ? error.message : 'No fue posible analizar la foto. Inténtalo de nuevo.')
-      focusFirstEmptyIdentityField()
+      if (requestId !== photoRequestIdRef.current) return
+      console.error('No se pudo cargar la foto de la cédula.', error)
+      setErrorMsg(error instanceof Error ? error.message : 'No fue posible cargar la foto. Inténtalo de nuevo.')
+      focusCedulaField()
     }
   }
 
@@ -361,7 +240,6 @@ export default function Home() {
     setEmpresa('')
     setFotoCedula(null)
     setFirmaData(null)
-    setOcrStatus('idle')
     setErrorMsg(null)
     sigCanvasRef.current?.clear()
   }
@@ -424,27 +302,9 @@ export default function Home() {
                   {fotoCedula ? (
                     <div className="space-y-4">
                       <Image src={fotoCedula} alt="Foto frontal de la cédula" width={560} height={360} unoptimized className="mx-auto max-h-52 max-w-full rounded-xl border border-slate-700 object-contain" />
-                      {ocrStatus === 'processing' && (
-                        <div role="status" className="space-y-2 text-sm text-cyan-300">
-                          <p>Procesando cédula de forma segura...</p>
-                          <div className="mx-auto h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-slate-800">
-                            <div className="h-full w-1/3 animate-pulse rounded-full bg-cyan-400" />
-                          </div>
-                        </div>
-                      )}
-                      {ocrStatus === 'success' && (
-                        <p role="status" className="text-sm font-semibold text-emerald-300">
-                          ✓ Cédula escaneada y datos extraídos correctamente. Verifica los datos antes de continuar.
-                        </p>
-                      )}
-                      {ocrStatus === 'partial' && (
-                        <p role="status" className="text-sm font-medium text-amber-300">
-                          Lectura parcial. Verifica los datos detectados y completa manualmente los campos vacíos.
-                        </p>
-                      )}
-                      {ocrStatus === 'error' && !errorMsg && (
-                        <p role="status" className="text-sm text-amber-300">No se reconocieron los datos. Toma una foto más nítida o ingrésalos manualmente.</p>
-                      )}
+                      <p role="status" className="text-sm font-semibold text-emerald-300">
+                        ✓ Foto cargada correctamente
+                      </p>
                       <label htmlFor="foto-input" className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-slate-800 px-4 py-2.5 text-sm font-semibold transition hover:bg-slate-700">
                         Cambiar foto
                       </label>
@@ -458,26 +318,21 @@ export default function Home() {
                       </label>
                     </div>
                   )}
-                  {ocrStatus === 'processing' && !fotoCedula && (
-                    <p role="status" className="mt-3 animate-pulse text-sm font-medium text-cyan-300">
-                      Procesando cédula real...
-                    </p>
-                  )}
                   <input id="foto-input" type="file" accept="image/*" capture="environment" onChange={handleFotoCapture} className="sr-only" />
                 </div>
-                <p className="text-xs leading-relaxed text-slate-500">La imagen se procesa en el servidor de esta aplicación; no se envía a un proveedor OCR externo. Revisa y confirma los datos detectados.</p>
+                <p className="text-xs leading-relaxed text-slate-500">La foto se adjunta al registro como soporte. Escribe manualmente tu número de cédula y nombre completo.</p>
               </section>
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <label htmlFor="cedula" className="block text-xs font-semibold uppercase tracking-wider text-slate-400">Número de cédula <span className="text-rose-400">*</span></label>
-                  <input ref={cedulaInputRef} id="cedula" type="text" inputMode="numeric" autoComplete="off" required placeholder="Escribe tu número de cédula" value={cedula} onChange={(event) => { cedulaManuallyEditedRef.current = true; setCedula(event.target.value) }} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20" />
-                  <p className="text-xs text-slate-500">Si no se detectó, escribe los 8 a 10 dígitos que aparecen en la cédula.</p>
+                  <input ref={cedulaInputRef} id="cedula" type="text" inputMode="numeric" autoComplete="off" required placeholder="Escribe tu número de cédula" value={cedula} onChange={(event) => setCedula(event.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20" />
+                  <p className="text-xs text-slate-500">Escribe el número de cédula que aparece en el documento.</p>
                 </div>
                 <div className="space-y-2">
                   <label htmlFor="nombre" className="block text-xs font-semibold uppercase tracking-wider text-slate-400">Nombre completo <span className="text-rose-400">*</span></label>
-                  <input ref={nombreInputRef} id="nombre" type="text" autoComplete="name" required placeholder="Escribe tu nombre completo" value={nombre} onChange={(event) => { nombreManuallyEditedRef.current = true; setNombre(event.target.value) }} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20" />
-                  <p className="text-xs text-slate-500">Confirma que los nombres y apellidos coincidan con el documento.</p>
+                  <input ref={nombreInputRef} id="nombre" type="text" autoComplete="name" required placeholder="Escribe tu nombre completo" value={nombre} onChange={(event) => setNombre(event.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20" />
+                  <p className="text-xs text-slate-500">Escribe tus nombres y apellidos completos.</p>
                 </div>
               </div>
 
@@ -514,7 +369,7 @@ export default function Home() {
                 {firmaData && <p role="status" className="text-center text-xs font-medium text-emerald-300">✓ Firma guardada correctamente</p>}
               </section>
 
-              <button type="submit" disabled={loading || ocrStatus === 'processing'} className="w-full rounded-2xl bg-indigo-600 py-3.5 font-semibold shadow-lg shadow-indigo-950/50 transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50">
+              <button type="submit" disabled={loading} className="w-full rounded-2xl bg-indigo-600 py-3.5 font-semibold shadow-lg shadow-indigo-950/50 transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50">
                 {loading ? 'Guardando asistencia...' : 'Firmar y registrar asistencia'}
               </button>
             </form>
