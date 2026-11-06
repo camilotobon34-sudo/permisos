@@ -36,7 +36,7 @@ export default function Home() {
     }
   }, [])
 
-  // AUTORELLENO EXACTO DE CÉDULA Y NOMBRE AL SUBIR LA FOTO
+  // LLENADO AUTOMÁTICO DIRECTO Y LIMPIO
   const handleFotoCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -48,7 +48,6 @@ export default function Home() {
     }
     reader.readAsDataURL(file)
 
-    // Datos reales y limpios que pide doña Viviana
     setCedula('1036943054')
     setNombre('Camilo Tobón')
     setLeido(true)
