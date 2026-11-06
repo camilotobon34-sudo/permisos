@@ -315,4 +315,5 @@ export default function Home() {
       <footer className="py-6 text-center text-xs text-slate-600">Control de Asistencia Industrial • Sistema Seguro</footer>
     </div>
   )
+  
 }
