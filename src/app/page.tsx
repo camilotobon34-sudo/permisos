@@ -13,21 +13,15 @@ type OcrStatus = 'idle' | 'processing' | 'success' | 'partial' | 'error'
 const STORAGE_KEY = 'asistencia_registrada_industrial'
 
 const ignoredNameWords = new Set([
-  'APELLIDO', 'APELLIDOS', 'NOMBRE', 'NOMBRES', 'IDENTIFICACION', 'PERSONAL',
-  'REPUBLICA', 'COLOMBIA', 'TARJETA', 'IDENTIDAD', 'CEDULA', 'CIUDADANIA',
-  'NUMERO', 'DOCUMENTO', 'FECHA', 'NACIMIENTO', 'EXPEDICION', 'LUGAR',
-  'ESTATURA', 'SANGRE', 'SEXO', 'MASCULINO', 'FEMENINO', 'FIRMA', 'NUIP',
-  'COL', 'DEPARTAMENTO', 'BOLIVAR', 'CUNDINAMARCA', 'REGISTRADURIA',
-  'NACIONAL', 'ORGANIZACION', 'ELECTORAL', 'CIVIL', 'EXPEDIDA', 'EN',
-  'DE', 'DEL', 'LA', 'EL', 'LOS', 'LAS', 'Y',
+  'REPUBLICA', 'DE', 'COLOMBIA', 'IDENTIFICACION', 'PERSONAL', 'CEDULA',
+  'CIUDADANIA', 'TARJETA', 'IDENTIDAD', 'NUMERO', 'APELLIDOS', 'NOMBRES',
+  'FIRMA', 'NACIMIENTO', 'ESTATURA', 'SANGRE', 'SEXO', 'MASCULINO',
+  'FEMENINO', 'FECHA', 'LUGAR', 'LA', 'EL', 'NUIP', 'COL', 'DEPARTAMENTO',
+  'BOLIVAR', 'CUNDINAMARCA', 'REGISTRADURIA', 'NACIONAL', 'DOCUMENTO',
+  'EXPEDICION', 'VENCIMIENTO', 'VENCE', 'ESTADO', 'CIVIL', 'ORGANIZACION',
+  'ELECTORAL', 'EXPEDIDA', 'EN', 'DEL', 'LOS', 'LAS', 'Y',
 ])
 
-const dateWords = /\b(FECHA|NACIMIENTO|EXPEDICION|VENCIMIENTO|VENCE)\b/
-const idWords = /\b(NUMERO|CEDULA|IDENTIFICACION|DOCUMENTO|NUIP)\b/
-const nameConnectors = new Set(['DE', 'DEL', 'LA', 'EL', 'LOS', 'LAS', 'Y', 'EN'])
-const nameFieldBoundaryWords = new Set(
-  [...ignoredNameWords].filter((word) => !nameConnectors.has(word)),
-)
 const institutionalNamePattern = new RegExp(
   [...ignoredNameWords]
     .filter((word) => word.length >= 4)
@@ -35,6 +29,9 @@ const institutionalNamePattern = new RegExp(
     .join('|'),
   'g',
 )
+const dateLabelPattern = /\b(FECHA|NACIMIENTO|EXPEDICION|VENCIMIENTO|VENCE)\b/
+const numberLabelPattern = /\bNUMERO\b/
+const nextFieldLabelPattern = /\b(NUMERO|APELLIDOS|NOMBRES|FECHA|NACIMIENTO|EXPEDICION|VENCIMIENTO|FIRMA|SEXO|ESTATURA|SANGRE|LUGAR)\b/
 
 function normalizeOcrLine(value: string) {
   return value
@@ -48,34 +45,27 @@ function normalizeOcrLine(value: string) {
 
 function nameWords(value: string) {
   return normalizeOcrLine(value)
+    .replace(institutionalNamePattern, ' ')
     .split(/[\s.,-]+/)
-    .map((word) => word.replace(institutionalNamePattern, ''))
     .filter((word) => /^[A-Z]{2,}$/.test(word) && !ignoredNameWords.has(word))
 }
 
 function extractNamePart(lines: string[], label: 'APELLIDOS' | 'NOMBRES') {
   const result: string[] = []
   for (let index = 0; index < lines.length; index += 1) {
-    const words = lines[index].split(/[\s.,-]+/)
-    const labelIndex = words.indexOf(label)
-    if (labelIndex < 0) continue
+    const labelMatch = new RegExp(`\\b${label}\\b`).exec(lines[index])
+    if (!labelMatch || labelMatch.index === undefined) continue
 
-    const followingLabel = words.findIndex((word, wordIndex) =>
-      wordIndex > labelIndex && nameFieldBoundaryWords.has(word),
-    )
-    const trailingWords = words
-      .slice(labelIndex + 1, followingLabel < 0 ? undefined : followingLabel)
-      .join(' ')
-    const inlineNames = nameWords(trailingWords)
+    const inlineText = lines[index].slice(labelMatch.index + label.length)
+    const inlineStop = nextFieldLabelPattern.exec(inlineText)
+    const inlineNames = nameWords(inlineStop ? inlineText.slice(0, inlineStop.index) : inlineText)
     if (inlineNames.length) {
       result.push(...inlineNames)
       continue
     }
 
     for (const candidate of lines.slice(index + 1, index + 4)) {
-      if (/\d/.test(candidate)) continue
-      const candidateWords = candidate.split(/[\s.,-]+/)
-      if (candidateWords.some((word) => nameFieldBoundaryWords.has(word))) break
+      if (nextFieldLabelPattern.test(candidate) || dateLabelPattern.test(candidate) || /\d/.test(candidate)) break
       const names = nameWords(candidate)
       if (names.length) {
         result.push(...names)
@@ -87,44 +77,53 @@ function extractNamePart(lines: string[], label: 'APELLIDOS' | 'NOMBRES') {
   return result
 }
 
-function extractNumberCandidates(line: string, priority: number, index: number) {
-  return (line.match(/\d(?:[\d\s.,;:/()_-]*\d)?/g) ?? [])
-    .map((number) => number.replace(/\D/g, ''))
-    .filter((number) => /^\d{8,11}$/.test(number))
-    .map((number) => ({ number, priority, index }))
+function extractDocumentNumber(line: string) {
+  const candidates = [...line.matchAll(/(?:^|[^\d])(\d(?:[\d.,;:/()_-]*\d){7,9})(?!\d)/g)]
+    .map((match) => match[1].replace(/\D/g, ''))
+    .filter((number) => /^\d{8,10}$/.test(number))
+  return candidates[0] ?? ''
 }
 
 function extractIdentity(text: string) {
   const lines = text.split(/\r?\n/).map(normalizeOcrLine).filter(Boolean)
-  const numberCandidates = lines.flatMap((line, index) => {
-    const isIdLine = idWords.test(line)
-    if (dateWords.test(line) && !isIdLine) return []
+  let cedula = ''
+  for (let index = 0; index < lines.length; index += 1) {
+    const label = numberLabelPattern.exec(lines[index])
+    if (!label || label.index === undefined) continue
 
-    const directMatches = extractNumberCandidates(line, isIdLine ? 1 : 0, index)
-    if (directMatches.length || !isIdLine) return directMatches
+    cedula = extractDocumentNumber(lines[index].slice(label.index + label[0].length))
+    if (cedula) break
 
-    for (let nextIndex = index + 1; nextIndex < Math.min(index + 3, lines.length); nextIndex += 1) {
-      const nextLine = lines[nextIndex]
-      if (dateWords.test(nextLine) || idWords.test(nextLine) || /\b(APELLIDOS|NOMBRES)\b/.test(nextLine)) break
-      const nextMatches = extractNumberCandidates(nextLine, 1, nextIndex)
-      if (nextMatches.length) return nextMatches
+    for (const candidate of lines.slice(index + 1, index + 3)) {
+      if (nextFieldLabelPattern.test(candidate) || dateLabelPattern.test(candidate)) break
+      cedula = extractDocumentNumber(candidate)
+      if (cedula) break
     }
-
-    return []
-  })
-
-  const cedula = numberCandidates
-    .sort((a, b) => b.priority - a.priority || a.index - b.index || b.number.length - a.number.length)[0]?.number ?? ''
+    if (cedula) break
+  }
 
   const surnames = extractNamePart(lines, 'APELLIDOS')
   const givenNames = extractNamePart(lines, 'NOMBRES')
-  const hasNameLabels = lines.some((line) => /\b(APELLIDOS|NOMBRES)\b/.test(line))
-  const remainingWords = hasNameLabels
-    ? [...surnames, ...givenNames]
-    : lines.flatMap((line) => nameWords(line))
-  const nombre = remainingWords.join(' ')
+  const nombre = [...surnames, ...givenNames].join(' ')
 
   return { cedula, nombre }
+}
+
+async function rotateImage(file: File, degrees: 90 | 270) {
+  const image = await createImageBitmap(file)
+  const canvas = document.createElement('canvas')
+  canvas.width = image.height
+  canvas.height = image.width
+  const context = canvas.getContext('2d')
+  if (!context) {
+    image.close()
+    throw new Error('No fue posible preparar la imagen para su lectura.')
+  }
+  context.translate(canvas.width / 2, canvas.height / 2)
+  context.rotate((degrees * Math.PI) / 180)
+  context.drawImage(image, -image.width / 2, -image.height / 2)
+  image.close()
+  return canvas
 }
 
 function readImage(file: File) {
@@ -233,15 +232,46 @@ export default function Home() {
       if (requestId !== ocrRequestIdRef.current) return
       setFotoCedula(preview)
 
-      const result = await Tesseract.recognize(file, 'spa', {
+      const worker = await Tesseract.createWorker('spa', undefined, {
         logger: (message) => {
-          if (message.status === 'recognizing text') {
+          if (requestId === ocrRequestIdRef.current && message.status === 'recognizing text') {
             setOcrProgress(Math.round(message.progress * 100))
           }
         },
       })
+      let extracted: ReturnType<typeof extractIdentity>
+      try {
+        const recognize = async (image: File | HTMLCanvasElement) => {
+          const result = await worker.recognize(image)
+          return extractIdentity(result.data.text)
+        }
+
+        extracted = await recognize(file)
+        if (!extracted.cedula || !extracted.nombre) {
+          for (const degrees of [90, 270] as const) {
+            if (requestId !== ocrRequestIdRef.current) return
+            let rotatedImage: HTMLCanvasElement
+            try {
+              rotatedImage = await rotateImage(file, degrees)
+            } catch (rotationError) {
+              console.warn(`No se pudo analizar la imagen girada ${degrees} grados.`, rotationError)
+              continue
+            }
+            const rotatedExtraction = await recognize(rotatedImage)
+            if (
+              Number(Boolean(rotatedExtraction.cedula)) + Number(Boolean(rotatedExtraction.nombre)) >
+              Number(Boolean(extracted.cedula)) + Number(Boolean(extracted.nombre))
+            ) {
+              extracted = rotatedExtraction
+            }
+            if (extracted.cedula && extracted.nombre) break
+          }
+        }
+      } finally {
+        await worker.terminate()
+      }
+
       if (requestId !== ocrRequestIdRef.current) return
-      const extracted = extractIdentity(result.data.text)
       setCedula(extracted.cedula)
       setNombre(extracted.nombre)
 
@@ -440,7 +470,7 @@ export default function Home() {
                       <Image src={fotoCedula} alt="Foto frontal de la cédula" width={560} height={360} unoptimized className="mx-auto max-h-52 max-w-full rounded-xl border border-slate-700 object-contain" />
                       {ocrStatus === 'processing' && (
                         <div role="status" className="space-y-2 text-sm text-cyan-300">
-                          <p>Procesando documento... {ocrProgress}%</p>
+                          <p>Procesando cédula real... {ocrProgress}%</p>
                           <progress value={ocrProgress} max="100" className="h-2 w-full accent-indigo-500" />
                         </div>
                       )}
@@ -451,11 +481,11 @@ export default function Home() {
                       )}
                       {ocrStatus === 'partial' && (
                         <p role="status" className="text-sm font-medium text-amber-300">
-                          No se detectaron todos los datos. Completa y verifica los campos manualmente.
+                          Lectura parcial. Verifica los datos detectados y completa manualmente los campos vacíos.
                         </p>
                       )}
                       {ocrStatus === 'error' && !errorMsg && (
-                        <p role="status" className="text-sm text-amber-300">Foto cargada. El OCR no detectó los datos; puedes ingresarlos manualmente.</p>
+                        <p role="status" className="text-sm text-amber-300">No se reconocieron los datos. Toma una foto más nítida o ingrésalos manualmente.</p>
                       )}
                       <label htmlFor="foto-input" className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-slate-800 px-4 py-2.5 text-sm font-semibold transition hover:bg-slate-700">
                         Cambiar foto
@@ -470,6 +500,11 @@ export default function Home() {
                       </label>
                     </div>
                   )}
+                  {ocrStatus === 'processing' && !fotoCedula && (
+                    <p role="status" className="mt-3 animate-pulse text-sm font-medium text-cyan-300">
+                      Procesando cédula real...
+                    </p>
+                  )}
                   <input id="foto-input" type="file" accept="image/*" capture="environment" onChange={handleFotoCapture} className="sr-only" />
                 </div>
                 <p className="text-xs leading-relaxed text-slate-500">El reconocimiento se procesa en este dispositivo. Revisa la cédula y confirma que la información detectada sea correcta.</p>
@@ -479,7 +514,7 @@ export default function Home() {
                 <div className="space-y-2">
                   <label htmlFor="cedula" className="block text-xs font-semibold uppercase tracking-wider text-slate-400">Número de cédula <span className="text-rose-400">*</span></label>
                   <input id="cedula" type="text" inputMode="numeric" autoComplete="off" required placeholder="Verifica el número" value={cedula} onChange={(event) => setCedula(event.target.value)} className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20" />
-                  <p className="text-xs text-slate-500">Si no se detectó, escribe los 8 a 11 dígitos que aparecen en la cédula.</p>
+                  <p className="text-xs text-slate-500">Si no se detectó, escribe los 8 a 10 dígitos que aparecen en la cédula.</p>
                 </div>
                 <div className="space-y-2">
                   <label htmlFor="nombre" className="block text-xs font-semibold uppercase tracking-wider text-slate-400">Nombre completo <span className="text-rose-400">*</span></label>
