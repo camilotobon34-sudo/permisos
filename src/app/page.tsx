@@ -40,7 +40,6 @@ export default function Home() {
     }
   }, [])
 
-  // LECTOR OCR CON FILTRO EXCLUSIVO PARA CÉDULAS COLOMBIANAS
   const handleFotoCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -70,30 +69,30 @@ export default function Home() {
         }
       )
 
+      console.log("Texto OCR obtenido:", text)
       const textoLimpio = text.toUpperCase()
 
-      // 1. Extraer Cédula (Busca entre 8 y 10 números seguidos)
-      const matchCedula = textoLimpio.match(/\b\d{8,10}\b/g)
+      // 1. EXTRAER CÉDULA: Le quitamos los puntos al texto para que lea "1.036..." como "1036..."
+      const textoSinPuntos = textoLimpio.replace(/\./g, '')
+      const matchCedula = textoSinPuntos.match(/\b\d{8,11}\b/g)
       if (matchCedula && matchCedula.length > 0) {
         setCedula(matchCedula[0])
       }
 
-      // 2. Extraer Nombres ignorando el texto impreso del plástico
+      // 2. EXTRAER NOMBRES: Filtramos toda la basura preimpresa de las tarjetas colombianas
       const palabrasIgnoradas = [
-        "IDENTIFICACION", "PERSONAL", "REPUBLICA", "COLOMBIA", 
-        "CEDULA", "CIUDADANIA", "NOMBRES", "APELLIDOS", "FIRMA", 
-        "NACIMIENTO", "ESTATURA", "SANGRE", "SEXO", "MASCULINO", 
-        "FEMENINO", "FECHA", "LUGAR", "NUMERO", "DE", "LA", "EL"
+        "IDENTIFICACION", "PERSONAL", "REPUBLICA", "REPÚBLICA", "COLOMBIA", 
+        "TARJETA", "IDENTIDAD", "CEDULA", "CIUDADANIA", "NUMERO", "NÚMERO",
+        "APELLIDOS", "NOMBRES", "FIRMA", "NACIMIENTO", "ESTATURA", "SANGRE", 
+        "SEXO", "MASCULINO", "FEMENINO", "FECHA", "LUGAR", "DE", "LA", "EL"
       ]
       
       const palabras = textoLimpio.match(/\b[A-ZÑÁÉÍÓÚ]{3,}\b/g) || []
       const palabrasReales = palabras.filter(p => !palabrasIgnoradas.includes(p))
 
       if (palabrasReales.length >= 2) {
-        // Une hasta 4 palabras válidas encontradas (Ej: Juan Camilo Tobon)
+        // Une los nombres reales encontrados (Ej: TOBON MARULANDA JUAN CAMILO)
         setNombre(palabrasReales.slice(0, 4).join(' '))
-      } else {
-        setNombre('') // Deja vacío si no lee bien para que lo escriba a mano
       }
 
     } catch (error) {
