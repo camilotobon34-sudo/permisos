@@ -53,10 +53,10 @@ function nameWords(value: string) {
 function extractNamePart(lines: string[], label: 'APELLIDOS' | 'NOMBRES') {
   const result: string[] = []
   for (let index = 0; index < lines.length; index += 1) {
-    const labelMatch = new RegExp(`\\b${label}\\b`).exec(lines[index])
-    if (!labelMatch || labelMatch.index === undefined) continue
+    const labelIndex = lines[index].indexOf(label)
+    if (labelIndex < 0) continue
 
-    const inlineText = lines[index].slice(labelMatch.index + label.length)
+    const inlineText = lines[index].slice(labelIndex + label.length)
     const inlineStop = nextFieldLabelPattern.exec(inlineText)
     const inlineNames = nameWords(inlineStop ? inlineText.slice(0, inlineStop.index) : inlineText)
     if (inlineNames.length) {
@@ -78,7 +78,7 @@ function extractNamePart(lines: string[], label: 'APELLIDOS' | 'NOMBRES') {
 }
 
 function extractDocumentNumber(line: string) {
-  const candidates = [...line.matchAll(/(?:^|[^\d])(\d(?:[\d.,;:/()_-]*\d){7,9})(?!\d)/g)]
+  const candidates = [...line.matchAll(/(?:^|[^\d])(\d(?:[\d\s.,;:/()_-]*\d){7,9})(?!\d)/g)]
     .map((match) => match[1].replace(/\D/g, ''))
     .filter((number) => /^\d{8,10}$/.test(number))
   return candidates[0] ?? ''
