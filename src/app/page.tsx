@@ -23,7 +23,6 @@ export default function Home() {
   const [success, setSuccess] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   
-  // Estados para el lector de OCR
   const [procesandoFoto, setProcesandoFoto] = useState(false)
   const [mensajeOcr, setMensajeOcr] = useState('')
   const [leido, setLeido] = useState(false)
@@ -41,54 +40,65 @@ export default function Home() {
     }
   }, [])
 
-  // LECTOR REAL OCR PARA CUALQUIER CÉDULA
+  // LECTOR OCR CON FILTRO EXCLUSIVO PARA CÉDULAS COLOMBIANAS
   const handleFotoCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
 
-    // 1. Mostrar la foto de inmediato
     const reader = new FileReader()
     reader.onloadend = () => {
       setFotoCedula(reader.result as string)
     }
     reader.readAsDataURL(file)
 
-    // 2. Iniciar el escaneo de IA
     setProcesandoFoto(true)
     setLeido(false)
-    setMensajeOcr('Iniciando motor de lectura...')
+    setMensajeOcr('Escaneando documento...')
     setCedula('')
     setNombre('')
 
     try {
       const { data: { text } } = await Tesseract.recognize(
         file,
-        'spa', // Idioma español
+        'spa',
         {
           logger: m => {
             if (m.status === 'recognizing text') {
-              setMensajeOcr(`Escaneando cédula: ${Math.round(m.progress * 100)}%`)
+              setMensajeOcr(`Analizando datos: ${Math.round(m.progress * 100)}%`)
             }
           }
         }
       )
 
-      // 3. Extraer el número (Busca secuencias de 8 a 10 números)
-      const numerosEncontrados = text.match(/\b\d{8,11}\b/g)
-      if (numerosEncontrados && numerosEncontrados.length > 0) {
-        setCedula(numerosEncontrados[0])
+      const textoLimpio = text.toUpperCase()
+
+      // 1. Extraer Cédula (Busca entre 8 y 10 números seguidos)
+      const matchCedula = textoLimpio.match(/\b\d{8,10}\b/g)
+      if (matchCedula && matchCedula.length > 0) {
+        setCedula(matchCedula[0])
       }
 
-      // 4. Extraer posibles nombres (Palabras en mayúscula)
-      const palabrasMayusculas = text.match(/\b[A-ZÑÁÉÍÓÚ]{3,}\b/g)
-      if (palabrasMayusculas && palabrasMayusculas.length >= 2) {
-        // Une las primeras palabras en mayúscula que encuentre
-        setNombre(palabrasMayusculas.slice(0, 3).join(' '))
+      // 2. Extraer Nombres ignorando el texto impreso del plástico
+      const palabrasIgnoradas = [
+        "IDENTIFICACION", "PERSONAL", "REPUBLICA", "COLOMBIA", 
+        "CEDULA", "CIUDADANIA", "NOMBRES", "APELLIDOS", "FIRMA", 
+        "NACIMIENTO", "ESTATURA", "SANGRE", "SEXO", "MASCULINO", 
+        "FEMENINO", "FECHA", "LUGAR", "NUMERO", "DE", "LA", "EL"
+      ]
+      
+      const palabras = textoLimpio.match(/\b[A-ZÑÁÉÍÓÚ]{3,}\b/g) || []
+      const palabrasReales = palabras.filter(p => !palabrasIgnoradas.includes(p))
+
+      if (palabrasReales.length >= 2) {
+        // Une hasta 4 palabras válidas encontradas (Ej: Juan Camilo Tobon)
+        setNombre(palabrasReales.slice(0, 4).join(' '))
+      } else {
+        setNombre('') // Deja vacío si no lee bien para que lo escriba a mano
       }
 
     } catch (error) {
       console.error('Error leyendo la cédula:', error)
-      setErrorMsg('No se pudo leer la cédula con claridad, por favor verifica los datos.')
+      setMensajeOcr('Error de lectura')
     } finally {
       setProcesandoFoto(false)
       setLeido(true)
@@ -224,7 +234,7 @@ export default function Home() {
             <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">
               Registro Digital en Campo
             </h1>
-            <p className="text-slate-400 text-sm">Sube la foto de tu cédula para procesar los datos de identidad con IA</p>
+            <p className="text-slate-400 text-sm">El sistema extraerá automáticamente los datos de la cédula</p>
           </div>
 
           {success && (
@@ -274,7 +284,7 @@ export default function Home() {
                       )}
                       
                       {!procesandoFoto && leido && (
-                        <p className="text-xs font-bold text-emerald-400">✓ Extracción completada</p>
+                        <p className="text-xs font-bold text-emerald-400">✓ Extracción inteligente completada</p>
                       )}
 
                       <label htmlFor="foto-input" className="inline-block bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold px-4 py-2 rounded-xl cursor-pointer transition-all">
