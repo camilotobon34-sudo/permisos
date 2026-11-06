@@ -10,8 +10,9 @@ const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
 const supabase = createClient(supabaseUrl, supabaseKey)
 
 export default function Home() {
-  const [cedula, setCedula] = useState('')
-  const [nombre, setNombre] = useState('')
+  // Valores fijos por defecto para que aparezcan siempre listos
+  const [cedula, setCedula] = useState('1036943054')
+  const [nombre, setNombre] = useState('Camilo Tobón')
   const [curso, setCurso] = useState('Trabajo en alturas – Trabajador autorizado')
   const [empresa, setEmpresa] = useState('')
   const [fotoCedula, setFotoCedula] = useState<string | null>(null)
@@ -43,10 +44,6 @@ export default function Home() {
     reader.onloadend = () => {
       const base64Image = reader.result as string
       setFotoCedula(base64Image)
-      
-      // AUTORELLENO INCORPORADO: Se llena de inmediato al subir la foto
-      setCedula('1036943054')
-      setNombre('Camilo Tobón')
     }
     reader.readAsDataURL(file)
   }
@@ -75,7 +72,7 @@ export default function Home() {
     }
 
     if (!cedula.trim() || !nombre.trim()) {
-      setErrorMsg('Por favor ingresa tu número de cédula y tu nombre.')
+      setErrorMsg('Por favor verifica tu número de cédula y tu nombre.')
       return
     }
 
@@ -156,8 +153,8 @@ export default function Home() {
     setSuccess(false)
     setShowEntrenadorModal(false)
     setCodigoEntrenador('')
-    setCedula('')
-    setNombre('')
+    setCedula('1036943054')
+    setNombre('Camilo Tobón')
     setEmpresa('')
     setFotoCedula(null)
     setFirmaData(null)
@@ -246,7 +243,6 @@ export default function Home() {
                   <input
                     type="text"
                     required
-                    placeholder="Ej: 1036943054"
                     value={cedula}
                     onChange={(e) => setCedula(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -257,7 +253,6 @@ export default function Home() {
                   <input
                     type="text"
                     required
-                    placeholder="Ej: Camilo Tobón"
                     value={nombre}
                     onChange={(e) => setNombre(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
