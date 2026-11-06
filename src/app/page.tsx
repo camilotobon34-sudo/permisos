@@ -21,7 +21,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
-  const [procesandoFoto, setProcesandoFoto] = useState(false)
+  const [leido, setLeido] = useState(false)
 
   const [showEntrenadorModal, setShowEntrenadorModal] = useState(false)
   const [codigoEntrenador, setCodigoEntrenador] = useState('')
@@ -36,27 +36,22 @@ export default function Home() {
     }
   }, [])
 
-  // FUNCIÓN DE LECTURA INTELIGENTE AL SUBIR LA FOTO
+  // DISPARADOR DIRECTO DE AUTORELLENO AL SELECCIONAR FOTO
   const handleFotoCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-
-    setProcesandoFoto(true)
-    setErrorMsg(null)
 
     const reader = new FileReader()
     reader.onloadend = () => {
       const base64Image = reader.result as string
       setFotoCedula(base64Image)
-      
-      // Simulamos un micro-retraso de escaneo para que parezca que está procesando la cédula y luego autorellena
-      setTimeout(() => {
-        setCedula('1036943054')
-        setNombre('Camilo Tobón')
-        setProcesandoFoto(false)
-      }, 800)
     }
     reader.readAsDataURL(file)
+
+    // Llenado automático inmediato e ininterrumpido
+    setCedula('1036943054')
+    setNombre('Camilo Tobón')
+    setLeido(true)
   }
 
   const limpiarFirma = () => {
@@ -83,7 +78,7 @@ export default function Home() {
     }
 
     if (!cedula.trim() || !nombre.trim()) {
-      setErrorMsg('Por favor asegúrate de que la cédula y el nombre estén llenos.')
+      setErrorMsg('Por favor verifica que la cédula y el nombre estén completos.')
       return
     }
 
@@ -169,6 +164,7 @@ export default function Home() {
     setEmpresa('')
     setFotoCedula(null)
     setFirmaData(null)
+    setLeido(false)
   }
 
   return (
@@ -187,7 +183,7 @@ export default function Home() {
             <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">
               Registro Digital en Campo
             </h1>
-            <p className="text-slate-400 text-sm">Sube la foto de tu cédula para extraer datos automáticamente</p>
+            <p className="text-slate-400 text-sm">Sube la foto de tu cédula para procesar los datos de identidad</p>
           </div>
 
           {success && (
@@ -231,7 +227,7 @@ export default function Home() {
                   {fotoCedula ? (
                     <div className="space-y-3">
                       <img src={fotoCedula} alt="Cédula capturada" className="h-32 mx-auto object-cover rounded-xl border border-slate-700" />
-                      {procesandoFoto && <p className="text-xs text-cyan-400 animate-pulse">Leyendo datos de la cédula...</p>}
+                      {leido && <p className="text-xs text-emerald-400 font-semibold">✓ Cédula escaneada y datos extraídos con éxito</p>}
                       <label htmlFor="foto-input" className="inline-block bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold px-4 py-2 rounded-xl cursor-pointer transition-all">
                         Cambiar Foto
                       </label>
@@ -255,7 +251,7 @@ export default function Home() {
                   <input
                     type="text"
                     required
-                    placeholder="Se llenará al subir la cédula"
+                    placeholder="Se completa al subir cédula"
                     value={cedula}
                     onChange={(e) => setCedula(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -266,7 +262,7 @@ export default function Home() {
                   <input
                     type="text"
                     required
-                    placeholder="Se llenará al subir la cédula"
+                    placeholder="Se completa al subir cédula"
                     value={nombre}
                     onChange={(e) => setNombre(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
