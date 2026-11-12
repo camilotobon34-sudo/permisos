@@ -1,3 +1,5 @@
+'use client'
+
 import { useState, useRef, useEffect } from 'react'
 import Link from 'next/link'
 import SignatureCanvas from 'react-signature-canvas'
@@ -59,9 +61,6 @@ export default function Home() {
       
       if (posiblesCedulas && posiblesCedulas.length > 0) {
         setCedula(posiblesCedulas[0])
-      } else {
-        alert("El sistema no pudo leer el número con claridad por el brillo de la foto. Por favor verifica la imagen.")
-        setCedula('')
       }
 
       // --- 2. DEJAR NOMBRE VACÍO ---
