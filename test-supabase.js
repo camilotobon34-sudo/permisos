@@ -1,8 +1,11 @@
-const fs = require('node:fs/promises')
-const os = require('node:os')
-const path = require('node:path')
-const { createClient } = require('@supabase/supabase-js')
-const dotenv = require('dotenv')
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { createClient } from '@supabase/supabase-js'
+import dotenv from 'dotenv'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 dotenv.config({ path: path.join(__dirname, '.env.local') })
 
@@ -87,7 +90,11 @@ async function main() {
     return
   }
 
-  console.log('INSERT completado correctamente en asistencias.')
+  const resultado = { success: true, status: httpStatus, table: 'asistencias' }
+  console.log('RESULTADO INSERT SUPABASE:', JSON.stringify(resultado, null, 2))
+  if (![200, 201].includes(httpStatus)) {
+    throw new Error(`El INSERT terminó con un status HTTP inesperado: ${httpStatus}`)
+  }
 }
 
 main().catch((error) => {

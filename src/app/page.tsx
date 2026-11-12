@@ -1,6 +1,7 @@
-const fs = require('node:fs/promises') frontend in production has a stuck cache and doesn't let us see the actual error when saving in Supabase. We are going to simulate the submission directly from the VS Code terminal.
+'use client'
 
 import { useState, useRef, useEffect } from 'react'
+import Image from 'next/image'
 import Link from 'next/link'
 import SignatureCanvas from 'react-signature-canvas'
 import { createClient } from '@supabase/supabase-js'
@@ -10,7 +11,7 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
 const supabase = createClient(supabaseUrl, supabaseKey)
 
-    "dotenv": "^18.0.10",ome() {
+export default function Home() {
   const [cedula, setCedula] = useState('')
   const [nombre, setNombre] = useState('')
   const [curso, setCurso] = useState('Trabajo en alturas – Trabajador autorizado')
@@ -22,7 +23,6 @@ const supabase = createClient(supabaseUrl, supabaseKey)
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
-  const [fotoSubida, setFotoSubida] = useState(false)
 
   const [showEntrenadorModal, setShowEntrenadorModal] = useState(false)
   const [codigoEntrenador, setCodigoEntrenador] = useState('')
@@ -32,10 +32,9 @@ const supabase = createClient(supabaseUrl, supabaseKey)
   const sigCanvasRef = useRef<SignatureCanvas | null>(null)
 
   useEffect(() => {
-    const registrado = localStorage.getItem('asistencia_registrada_industrial')
-    if (registrado) {
-      setAlreadyRegistered(true)
-    }
+    if (localStorage.getItem('asistencia_registrada_industrial') !== 'true') return
+    const timer = window.setTimeout(() => setAlreadyRegistered(true), 0)
+    return () => window.clearTimeout(timer)
   }, [])
 
   const handleFotoCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -47,7 +46,6 @@ const supabase = createClient(supabaseUrl, supabaseKey)
       setFotoCedula(reader.result as string)
     }
     reader.readAsDataURL(file)
-    setFotoSubida(true)
 
     setOcrLoading(true)
     try {
@@ -106,9 +104,11 @@ const supabase = createClient(supabaseUrl, supabaseKey)
       let coordenadas = 'N/A'
       if (navigator.geolocation) {
         try {
-          const position: any = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { timeout: 5000 }))
+          const position = await new Promise<GeolocationPosition>((resolve, reject) =>
+            navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 5000 }),
+          )
           coordenadas = `${position.coords.latitude}, ${position.coords.longitude}`
-        } catch (geoErr) {
+        } catch {
           console.log('GPS no disponible')
         }
       }
@@ -133,10 +133,12 @@ const supabase = createClient(supabaseUrl, supabaseKey)
       localStorage.setItem('asistencia_registrada_industrial', 'true')
       setSuccess(true)
       setAlreadyRegistered(true)
-    } catch (err: any) {
-      console.error("Detalle completo del error de Supabase:", err);
-      // Aquí revelamos el error exacto en pantalla en lugar del mensaje genérico
-      setErrorMsg(`Error BD: ${err.message || err.details || err.hint || 'Desconocido'}`)
+    } catch (error: unknown) {
+      console.error('Detalle completo del error de Supabase:', error)
+      const supabaseError = error && typeof error === 'object'
+        ? error as { message?: string; details?: string; hint?: string }
+        : {}
+      setErrorMsg(`Error BD: ${supabaseError.message || supabaseError.details || supabaseError.hint || 'Desconocido'}`)
     } finally {
       setLoading(false)
     }
@@ -169,7 +171,6 @@ const supabase = createClient(supabaseUrl, supabaseKey)
     setEmpresa('')
     setFotoCedula(null)
     setFirmaData(null)
-    setFotoSubida(false)
   }
 
   return (
@@ -221,7 +222,7 @@ const supabase = createClient(supabaseUrl, supabaseKey)
                 <div className="border-2 border-dashed border-slate-800 rounded-2xl p-6 text-center bg-slate-950/50 hover:border-indigo-500/50 transition-colors">
                   {fotoCedula ? (
                     <div className="space-y-3">
-                      <img src={fotoCedula} alt="Cédula capturada" className="h-32 mx-auto object-cover rounded-xl border border-slate-700" />
+                      <Image src={fotoCedula} alt="Cédula capturada" width={192} height={128} unoptimized className="h-32 mx-auto object-cover rounded-xl border border-slate-700" />
                       <p className={`text-xs font-bold ${ocrLoading ? 'text-amber-400 animate-pulse' : 'text-emerald-400'}`}>
                         {ocrLoading ? '⏳ Extrayendo número de cédula...' : '✓ Foto de cédula cargada correctamente'}
                       </p>
