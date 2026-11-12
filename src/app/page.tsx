@@ -1,12 +1,8 @@
-'use client'
-
 import { useState, useRef, useEffect } from 'react'
 import Link from 'next/link'
 import SignatureCanvas from 'react-signature-canvas'
 import { createClient } from '@supabase/supabase-js'
 import Tesseract from 'tesseract.js'
-
-
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
@@ -139,7 +135,9 @@ export default function Home() {
       setSuccess(true)
       setAlreadyRegistered(true)
     } catch (err: any) {
-      setErrorMsg('Error al registrar la asistencia. Inténtalo de nuevo.')
+      console.error("Detalle completo del error de Supabase:", err);
+      // Aquí revelamos el error exacto en pantalla en lugar del mensaje genérico
+      setErrorMsg(`Error BD: ${err.message || err.details || err.hint || 'Desconocido'}`)
     } finally {
       setLoading(false)
     }
@@ -315,5 +313,4 @@ export default function Home() {
       <footer className="py-6 text-center text-xs text-slate-600">Control de Asistencia Industrial • Sistema Seguro</footer>
     </div>
   )
-  
 }
