@@ -1,4 +1,4 @@
-'use client'
+const fs = require('node:fs/promises') frontend in production has a stuck cache and doesn't let us see the actual error when saving in Supabase. We are going to simulate the submission directly from the VS Code terminal.
 
 import { useState, useRef, useEffect } from 'react'
 import Link from 'next/link'
@@ -10,7 +10,7 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
 const supabase = createClient(supabaseUrl, supabaseKey)
 
-export default function Home() {
+    "dotenv": "^18.0.10",ome() {
   const [cedula, setCedula] = useState('')
   const [nombre, setNombre] = useState('')
   const [curso, setCurso] = useState('Trabajo en alturas – Trabajador autorizado')
