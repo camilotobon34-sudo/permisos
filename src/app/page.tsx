@@ -7,7 +7,7 @@ import { createClient } from '@supabase/supabase-js'
 import Tesseract from 'tesseract.js'
 
 const supabaseUrl = 'https://pqtpzsyjfbgboqermdfg.supabase.co'
-const supabaseKey = 'sb_publishable_KKW91bdnvvD8iKUuD_L-mA_SjZHM...'
+const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBxdHB6c3lqZmJnYm9xZXJtZGZnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTM0NzY1MTMsImV4cCI6MjEwOTA1MjUxM30.G7DrwJtTO0kVWVk7CRbzULH9AjEi7U9GEBBS0xRj0G4'
 const supabase = createClient(supabaseUrl, supabaseKey)
 export default function Home() {
   const [cedula, setCedula] = useState('')
