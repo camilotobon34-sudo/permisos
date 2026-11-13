@@ -1,0 +1,3 @@
+[33m44801ad[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m)[m Actualizar formulario de campo en la pagina principal
+[33m4dd6875[m Actualizar formulario de registro
+[33m8b89c74[m chore(prod): refactorización total del flujo de OCR, blindaje de errores de Supabase y optimización para producción
