@@ -6,10 +6,9 @@ import SignatureCanvas from 'react-signature-canvas'
 import { createClient } from '@supabase/supabase-js'
 import Tesseract from 'tesseract.js'
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
+const supabaseUrl = 'https://pqtpzsyjfbgboqermdfg.supabase.co'
+const supabaseKey = 'sb_publishable_KKW91bdnvvD8iKUuD_L-mA_SjZHM...'
 const supabase = createClient(supabaseUrl, supabaseKey)
-
 export default function Home() {
   const [cedula, setCedula] = useState('')
   const [nombre, setNombre] = useState('')
