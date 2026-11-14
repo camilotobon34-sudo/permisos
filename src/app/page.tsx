@@ -26,10 +26,7 @@ export default function RegistroPage() {
         textAlign: 'center',
         boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7)'
       }}>
-        <div style={{
-          fontSize: '48px',
-          marginBottom: '16px'
-        }}>
+        <div style={{ fontSize: '48px', marginBottom: '16px' }}>
           ⛔
         </div>
         <h1 style={{
