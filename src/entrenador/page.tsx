@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 
 export default function EntrenadorLogin() {
   const [codigo, setCodigo] = useState('');
@@ -60,9 +61,9 @@ export default function EntrenadorLogin() {
         </form>
 
         <div className="text-center border-t border-slate-800 pt-4">
-          <a href="/" className="text-xs text-slate-400 hover:text-white underline">
+          <Link href="/" className="text-xs text-slate-400 hover:text-white underline">
             ← Volver al formulario de registro
-          </a>
+          </Link>
         </div>
 
       </div>

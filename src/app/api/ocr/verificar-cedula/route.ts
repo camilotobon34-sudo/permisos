@@ -1,10 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-
-// Inicializa Supabase con tus credenciales de entorno
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-const supabase = createClient(supabaseUrl, supabaseKey);
+import { createSupabaseServerClient } from '@/lib/supabase-server';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -18,6 +13,7 @@ export async function GET(request: Request) {
   }
 
   try {
+    const supabase = createSupabaseServerClient();
     // Consulta conectada a tu tabla 'alumnos' en Supabase
     const { data, error } = await supabase
       .from('alumnos') 
@@ -39,6 +35,7 @@ export async function GET(request: Request) {
     });
 
   } catch (error) {
+    console.error('Error al consultar Supabase para verificar cédula:', error);
     return NextResponse.json(
       { message: 'Error interno al consultar la base de datos.' },
       { status: 500 }
